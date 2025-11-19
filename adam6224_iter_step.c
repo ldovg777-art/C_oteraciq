@@ -420,11 +420,18 @@ int main(void)
             int dir = (phase->step_mV > 0) ? 1 : -1;
             int idx = 0;
             int iter_mV = phase->start_mV;
+            int phase_had_steps = 0;
 
             while (!g_stop &&
                    ((dir > 0 && iter_mV <= phase->end_mV) ||
                     (dir < 0 && iter_mV >= phase->end_mV)))
             {
+                if (phase->pause_ms == 0) {
+                    /* Если пауза между микрошагами нулевая, пропускаем этот шаг */
+                    iter_mV += phase->step_mV;
+                    continue;
+                }
+
                 /* ABSOLUTE ожидание начала шага */
                 if (!first_step) {
                     timespec_add_ms(&t_set, phase->period_ms);
@@ -433,6 +440,8 @@ int main(void)
                 }
 
                 clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME, &t_set, NULL);
+
+                phase_had_steps = 1;
 
                 /* Установка AO0 */
                 double iter_V = (double)iter_mV / 1000.0;
@@ -500,6 +509,54 @@ int main(void)
                 );
                 fflush(stdout);
 
+                if (phase->pause_ms > 0 && phase_had_steps) {
+                    /* Дополнительное измерение в середине паузы шага */
+                    struct timespec t_mid = t_set;
+                    timespec_add_ms(&t_mid, phase->pause_ms / 2);
+                    clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME, &t_mid, NULL);
+
+                    struct timespec t_mid_now;
+                    clock_gettime(CLOCK_MONOTONIC, &t_mid_now);
+                    double t_mid_ms = timespec_to_ms(&t_mid_now) - timespec_to_ms(&t0);
+
+                    float ai_mid[8];
+                    for (int ch = 0; ch < 8; ch++) {
+                        unsigned char st = 0;
+                        int ai_ret = AI_GetFloatValue(fd_io, ch, &ai_mid[ch], &st);
+                        if (ai_ret != 0) {
+                            ai_mid[ch] = prev_ai[ch];
+                        } else {
+                            prev_ai[ch] = ai_mid[ch];
+                        }
+                    }
+
+                    int mid_idx = idx * 10 + 5; /* Маркер измерения середины паузы */
+
+                    fprintf(f,
+                        "%ld;%d;%d;%.3f;%d;%.6f;%u;%.6f;"
+                        "%.6f;%.6f;%.6f;%.6f;%.6f;%.6f;%.6f;%.6f\n",
+                        cycle_num,
+                        phase_idx + 1, mid_idx, t_mid_ms,
+                        iter_mV, iter_V,
+                        (unsigned int)code_set,
+                        ao_V,
+                        (double)ai_mid[0], (double)ai_mid[1], (double)ai_mid[2], (double)ai_mid[3],
+                        (double)ai_mid[4], (double)ai_mid[5], (double)ai_mid[6], (double)ai_mid[7]
+                    );
+
+                    printf(
+                        "cycle=%ld phase=%d idx=%d (mid-pause) t=%.3f ms iter=%d mV (%.3f В) AO_code=%u AO_V=%.3f "
+                        "AI=[%.6f %.6f %.6f %.6f %.6f %.6f %.6f %.6f]\n",
+                        cycle_num,
+                        phase_idx + 1, mid_idx, t_mid_ms,
+                        iter_mV, iter_V,
+                        (unsigned int)code_set,
+                        ao_V,
+                        ai_mid[0], ai_mid[1], ai_mid[2], ai_mid[3], ai_mid[4], ai_mid[5], ai_mid[6], ai_mid[7]
+                    );
+                    fflush(stdout);
+                }
+
                 ++idx;
                 ++total_microsteps;
                 iter_mV += phase->step_mV;
@@ -508,11 +565,29 @@ int main(void)
             if (abort_loops || g_stop)
                 break;
 
-            wait_with_pause(&t_set, phase->pause_ms);
+            if (phase_had_steps) {
+                wait_with_pause(&t_set, phase->pause_ms);
+            }
         }
 
         if (abort_loops || g_stop)
             break;
+
+        /* Перечитать файл уставок после завершения цикла */
+        IterParams new_par;
+        if (load_iter_params(ITER_PARAMS_FILE, &new_par) == 0) {
+            if (validate_iter_params(&new_par) == 0) {
+                par = new_par;
+                printf("Параметры итерации обновлены после цикла %ld\n",
+                       cycle_num);
+            } else {
+                fprintf(stderr,
+                        "Новые параметры из файла некорректны, оставляем предыдущие\n");
+            }
+        } else {
+            fprintf(stderr,
+                    "Не удалось перечитать файл параметров, оставляем предыдущие\n");
+        }
     }
 
     printf("\nЗавершение. Микрошагов всего: %ld\n", total_microsteps);
