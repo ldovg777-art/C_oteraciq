@@ -513,6 +513,22 @@ int main(void)
 
         if (abort_loops || g_stop)
             break;
+
+        /* Перечитать файл уставок после завершения цикла */
+        IterParams new_par;
+        if (load_iter_params(ITER_PARAMS_FILE, &new_par) == 0) {
+            if (validate_iter_params(&new_par) == 0) {
+                par = new_par;
+                printf("Параметры итерации обновлены после цикла %ld\n",
+                       cycle_num);
+            } else {
+                fprintf(stderr,
+                        "Новые параметры из файла некорректны, оставляем предыдущие\n");
+            }
+        } else {
+            fprintf(stderr,
+                    "Не удалось перечитать файл параметров, оставляем предыдущие\n");
+        }
     }
 
     printf("\nЗавершение. Микрошагов всего: %ld\n", total_microsteps);
