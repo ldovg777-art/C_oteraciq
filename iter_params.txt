@@ -1,0 +1,16 @@
+# Пример конфигурации для adam6224_iter_step_arm с двумя фазами
+# Фаза 1: от -5 В до 0 В, период 100 мс, settle 40 мс, затем пауза 200 мс
+start_mV=-5000
+end_mV=0
+step_mV=250
+period_ms=100
+settle_ms=40
+pause_ms=200
+
+# Фаза 2: от 0 В до +5 В, период 150 мс, без паузы
+step2_start_mV=0
+step2_end_mV=5000
+step2_step_mV=250
+step2_period_ms=150
+step2_settle_ms=60
+step2_pause_ms=0
