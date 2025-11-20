@@ -490,3 +490,27 @@ gcc -Wall iter_http_server.c -o iter_http_server
 
 - Чтение осуществляется через `adamapi` (`AI_GetFloatValue`), Modbus-регистры для AI в проекте не используются.
 - Формат CSV и ответа `/status` совпадает: значения AI в вольтах, тип `float`.
+
+## Modbus/TCP сервер уставок на ADAM-6717
+
+Добавлен отдельный сервер `iter_modbus_server`, который поднимается на порту **1502** на самом 6717 и отображает `/home/root/iter_params.txt` в Holding Registers (int32, порядок слов big-endian):
+
+- 0–1: версия/протокол (1).
+- 2–3: `repeats` (0 = бесконечно, −1 = один проход, >0 = количество проходов).
+- 4–5: `phases` (1..5).
+- Фазы 1–5: по 12 регистров на фазу (6 int32): `start_mV`, `end_mV`, `step_mV`, `period_ms`, `settle_ms`, `pause_ms`. Фаза 1 → регистры 6–17; фаза 2 → 18–29; ... фаза 5 → 54–65.
+
+Передача в int32 исключает погрешности округления float: записанные на панели целые значения читаются обратно без потерь. Все входящие значения дополнительно ограничиваются по количеству фаз и сохраняются в `iter_params.txt` в нормализованном виде.
+
+### Сборка `iter_modbus_server` через Docker (Windows, офлайн)
+
+В корне репозитория добавлен скрипт `build_iter_modbus_server.cmd` — он повторяет подход основного `build_adam6224_iter_step.cmd` и собирает `iter_modbus_server.c` под ARM в контейнере Debian:
+
+1. Скопируйте репозиторий (и файл скрипта) в `C:\ADAM_BUILD` на ПК.
+2. В командной строке выполните:
+
+   ```
+   C:\ADAM_BUILD>build_iter_modbus_server.cmd
+   ```
+
+Скрипт запускает `docker run debian:11`, ставит `gcc-arm-linux-gnueabihf` и `libmodbus-dev:armhf`, затем собирает `iter_modbus_server_arm` со связыванием `-lmodbus -lm`. Готовый бинарник появится в той же директории `C:\ADAM_BUILD` и его можно переносить на ADAM-6717.
