@@ -63,6 +63,26 @@ static void handle_sigint(int sig)
     g_stop = 1;
 }
 
+static int install_signal_handlers(void)
+{
+    struct sigaction sa;
+    memset(&sa, 0, sizeof(sa));
+    sa.sa_handler = handle_sigint;
+    sigemptyset(&sa.sa_mask);
+
+    if (sigaction(SIGINT, &sa, NULL) == -1) {
+        perror("iter_modbus_server: не удалось установить обработчик SIGINT");
+        return -1;
+    }
+
+    if (sigaction(SIGTERM, &sa, NULL) == -1) {
+        perror("iter_modbus_server: не удалось установить обработчик SIGTERM");
+        return -1;
+    }
+
+    return 0;
+}
+
 static void strtrim(char *s)
 {
     char *p = s;
@@ -305,8 +325,8 @@ static int is_write_function(int func)
 
 int main(void)
 {
-    signal(SIGINT, handle_sigint);
-    signal(SIGTERM, handle_sigint);
+    if (install_signal_handlers() == -1)
+        return 1;
 
     IterParams params;
     load_iter_params(PARAMS_FILE, &params);
