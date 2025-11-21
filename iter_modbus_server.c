@@ -39,6 +39,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <sys/stat.h>
 
 #define PARAMS_FILE "/home/root/iter_params.txt"
 #define MODBUS_PORT 1502
@@ -177,7 +178,7 @@ static int parse_int(const char *s, int *out)
     return 0;
 }
 
-static int load_iter_params(const char *path, IterParams *p)
+static int load_iter_params(const char *path, IterParams *p, time_t *mtime_out)
 {
     FILE *fp = fopen(path, "r");
     init_iter_params(p);
@@ -185,6 +186,10 @@ static int load_iter_params(const char *path, IterParams *p)
         perror("iter_modbus_server: не удалось открыть iter_params.txt, используем значения по умолчанию");
         return -1;
     }
+
+    struct stat st;
+    if (stat(path, &st) == 0 && mtime_out)
+        *mtime_out = st.st_mtime;
 
     char line[256];
     while (fgets(line, sizeof(line), fp)) {
@@ -245,7 +250,7 @@ static int load_iter_params(const char *path, IterParams *p)
     return 0;
 }
 
-static int save_iter_params(const char *path, const IterParams *p)
+static int save_iter_params(const char *path, const IterParams *p, time_t *mtime_out)
 {
     FILE *fp = fopen(path, "w");
     if (!fp) {
@@ -267,6 +272,11 @@ static int save_iter_params(const char *path, const IterParams *p)
     }
 
     fclose(fp);
+    if (mtime_out) {
+        struct stat st;
+        if (stat(path, &st) == 0)
+            *mtime_out = st.st_mtime;
+    }
     return 0;
 }
 
@@ -423,13 +433,30 @@ static bool write_hits_block(int start_reg, int reg_count, int block_start, int 
     return end_reg >= block_start && start_reg <= block_end;
 }
 
+static void reload_params_if_updated(const char *path, IterParams *params, uint16_t *regs, int reg_count,
+                                     time_t *last_mtime)
+{
+    if (!last_mtime)
+        return;
+
+    struct stat st;
+    if (stat(path, &st) == -1)
+        return;
+
+    if (st.st_mtime > *last_mtime) {
+        if (load_iter_params(path, params, last_mtime) == 0)
+            params_to_registers(params, regs, reg_count);
+    }
+}
+
 int main(void)
 {
     if (install_signal_handlers() == -1)
         return 1;
 
     IterParams params;
-    load_iter_params(PARAMS_FILE, &params);
+    time_t params_mtime = 0;
+    load_iter_params(PARAMS_FILE, &params, &params_mtime);
 
     modbus_t *ctx = modbus_new_tcp("0.0.0.0", MODBUS_PORT);
     if (!ctx) {
@@ -466,6 +493,8 @@ int main(void)
         }
 
         for (;;) {
+            reload_params_if_updated(PARAMS_FILE, &params, mapping->tab_registers, mapping->nb_registers, &params_mtime);
+
             rc = modbus_receive(ctx, query);
             if (rc == -1) {
                 break; /* клиент закрыл соединение */
@@ -485,8 +514,21 @@ int main(void)
                 bool hit_float = write_hits_block(start_reg, reg_count, FLOAT_BASE, FLOAT_HOLDING_REG_COUNT);
                 bool prefer_float = hit_float;
 
-                registers_to_params(mapping->tab_registers, &params, prefer_float);
-                save_iter_params(PARAMS_FILE, &params);
+                IterParams updated_params = params;
+                registers_to_params(mapping->tab_registers, &updated_params, prefer_float);
+
+                struct stat st;
+                if (stat(PARAMS_FILE, &st) == 0 && st.st_mtime > params_mtime) {
+                    if (load_iter_params(PARAMS_FILE, &params, &params_mtime) == 0) {
+                        registers_to_params(mapping->tab_registers, &params, prefer_float);
+                    } else {
+                        params = updated_params;
+                    }
+                } else {
+                    params = updated_params;
+                }
+
+                save_iter_params(PARAMS_FILE, &params, &params_mtime);
                 params_to_registers(&params, mapping->tab_registers, mapping->nb_registers);
             }
         }
