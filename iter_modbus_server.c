@@ -44,6 +44,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
+#include <time.h>
 #include <unistd.h>
 
 #define PARAMS_FILE "/home/root/iter_params.txt"
@@ -361,6 +363,31 @@ static void params_to_registers(const IterParams *p, uint16_t *regs, int reg_cou
     }
 }
 
+static int read_file_mtime(const char *path, time_t *out)
+{
+    struct stat st;
+    if (stat(path, &st) == -1)
+        return -1;
+    *out = st.st_mtime;
+    return 0;
+}
+
+static void reload_params_if_updated(const char *path, IterParams *params, uint16_t *regs, int reg_count, time_t *cached_mtime)
+{
+    time_t current_mtime = 0;
+    if (read_file_mtime(path, &current_mtime) == -1)
+        return;
+
+    if (*cached_mtime != 0 && current_mtime == *cached_mtime)
+        return;
+
+    if (load_iter_params(path, params) == 0) {
+        *cached_mtime = current_mtime;
+        params_to_registers(params, regs, reg_count);
+        printf("iter_params.txt обновлён извне, значения перечитаны в регистры\n");
+    }
+}
+
 static void registers_to_params(const uint16_t *regs, IterParams *p, int use_float_block)
 {
     if (use_float_block) {
@@ -440,7 +467,9 @@ int main(void)
         return 1;
 
     IterParams params;
+    time_t params_mtime = 0;
     load_iter_params(PARAMS_FILE, &params);
+    read_file_mtime(PARAMS_FILE, &params_mtime);
 
     modbus_t *ctx = modbus_new_tcp("0.0.0.0", MODBUS_PORT);
     if (!ctx) {
@@ -477,6 +506,8 @@ int main(void)
         }
 
         for (;;) {
+            reload_params_if_updated(PARAMS_FILE, &params, mapping->tab_registers, mapping->nb_registers, &params_mtime);
+
             rc = modbus_receive(ctx, query);
             if (rc == -1) {
                 break; /* клиент закрыл соединение */
@@ -513,6 +544,7 @@ int main(void)
                     params.num_phases = prev_num_phases;
 
                 save_iter_params(PARAMS_FILE, &params);
+                read_file_mtime(PARAMS_FILE, &params_mtime);
                 params_to_registers(&params, mapping->tab_registers, mapping->nb_registers);
             }
         }
