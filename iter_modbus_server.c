@@ -304,10 +304,7 @@ int main(void) {
     params_to_registers(&params, mapping->tab_registers, mapping->nb_registers);
 
     /* Установка таймаутов для сервера */
-    struct timeval response_timeout;
-    response_timeout.tv_sec = 1;
-    response_timeout.tv_usec = 0;
-    modbus_set_response_timeout(ctx, &response_timeout);
+    modbus_set_response_timeout(ctx, 1, 0);
     
     int server_socket = modbus_tcp_listen(ctx, MAX_CLIENTS);
     if (server_socket < 0) {
