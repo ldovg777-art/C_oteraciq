@@ -624,6 +624,7 @@ int main(void)
                     if (control_bits != 0) {
                         mapping->tab_registers[CONTROL_REG_ADDR] = control_bits;
                         mapping->tab_registers[CONTROL_REG_ADDR + 1] = 0;
+                        float_to_regs(control_bits_to_float(control_bits), &mapping->tab_registers[CONTROL_REG_ADDR]);
                     }
                 }
 
