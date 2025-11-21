@@ -21,6 +21,10 @@
  *     order). Поддерживает запись/чтение HMI в формате float без потери
  *     младших единиц. При записи в FLOAT-блок значения округляются до int
  *     и сохраняются в iter_params.txt.
+ *   Регистр управления, 132 (Holding Register):
+ *     бит 0 (0x0001) — START/RESUME
+ *     бит 1 (0x0002) — STOP (переход в остановку без выхода из процесса)
+ *     бит 2 (0x0004) — RESTART (перечитать iter_params.txt и начать с цикла 1)
  *
  * Для HMI: каждое 32-битное значение занимает ДВА последовательных регистра.
  * Сервер использует порядок big-endian (старшее слово по меньшему адресу),
@@ -61,7 +65,10 @@
 #define FLOAT_BASE INT_HOLDING_REG_COUNT
 #define FLOAT_HOLDING_REG_COUNT (FLOAT_HEADER_REGS + MAX_PHASES * FLOAT_PHASE_REGS_PER_PHASE)
 
-#define HOLDING_REG_COUNT (INT_HOLDING_REG_COUNT + FLOAT_HOLDING_REG_COUNT)
+#define CONTROL_REG_ADDR (FLOAT_BASE + FLOAT_HOLDING_REG_COUNT)
+#define CONTROL_REG_COUNT 1
+
+#define HOLDING_REG_COUNT (INT_HOLDING_REG_COUNT + FLOAT_HOLDING_REG_COUNT + CONTROL_REG_COUNT)
 
 typedef struct {
     int start_mV;
@@ -343,6 +350,10 @@ static void params_to_registers(const IterParams *p, uint16_t *regs, int reg_cou
     if (reg_count < HOLDING_REG_COUNT)
         return;
 
+    uint16_t control_shadow = 0;
+    if (reg_count > CONTROL_REG_ADDR)
+        control_shadow = regs[CONTROL_REG_ADDR];
+
     memset(regs, 0, sizeof(uint16_t) * reg_count);
 
     int32_to_regs(1, &regs[0]);
@@ -373,6 +384,8 @@ static void params_to_registers(const IterParams *p, uint16_t *regs, int reg_cou
         float_to_regs((float)p->phases[i].settle_ms, &regs[base + 8]);
         float_to_regs((float)p->phases[i].pause_ms, &regs[base + 10]);
     }
+
+    regs[CONTROL_REG_ADDR] = control_shadow;
 }
 
 static int read_file_mtime(const char *path, time_t *out)

@@ -33,6 +33,15 @@
 #define ADAM6224_PORT    502
 #define ADAM6224_SLAVE   1
 
+#define MODBUS_CTRL_IP   "127.0.0.1"
+#define MODBUS_CTRL_PORT 1502
+#define MODBUS_CTRL_SLAVE 1
+
+#define CONTROL_REG_ADDR 132
+#define CMD_START   0x0001
+#define CMD_STOP    0x0002
+#define CMD_RESTART 0x0004
+
 #define AO0_REG_ADDR     0
 
 #define AO_MIN_V   (-5.0)
@@ -298,6 +307,38 @@ static void handle_sigint(int sig)
 }
 
 
+typedef enum {
+    CONTROL_RUNNING = 0,
+    CONTROL_STOPPED = 1,
+} ControlState;
+
+static void poll_control_commands(modbus_t *ctx, ControlState *state, int *restart_requested)
+{
+    if (!ctx || !state)
+        return;
+
+    uint16_t reg = 0;
+    int rc = modbus_read_registers(ctx, CONTROL_REG_ADDR, 1, &reg);
+    if (rc == -1)
+        return;
+
+    if (reg == 0)
+        return;
+
+    /* Очистка регистра после обработки, чтобы не получать повторные команды */
+    (void)modbus_write_register(ctx, CONTROL_REG_ADDR, 0);
+
+    if (reg & CMD_RESTART) {
+        *restart_requested = 1;
+        *state = CONTROL_RUNNING;
+    }
+    if (reg & CMD_STOP)
+        *state = CONTROL_STOPPED;
+    if (reg & CMD_START)
+        *state = CONTROL_RUNNING;
+}
+
+
 
 int main(void)
 {
@@ -389,229 +430,291 @@ int main(void)
         return -1;
     }
 
+    modbus_t *ctrl_ctx = modbus_new_tcp(MODBUS_CTRL_IP, MODBUS_CTRL_PORT);
+    if (!ctrl_ctx) {
+        fprintf(stderr, "Предупреждение: не удалось создать Modbus-контекст управления\n");
+    } else {
+        modbus_set_slave(ctrl_ctx, MODBUS_CTRL_SLAVE);
+        if (modbus_connect(ctrl_ctx) == -1) {
+            fprintf(stderr, "Предупреждение: не удалось подключиться к локальному Modbus-серверу (%s)\n",
+                    modbus_strerror(errno));
+            modbus_free(ctrl_ctx);
+            ctrl_ctx = NULL;
+        }
+    }
+
     signal(SIGINT, handle_sigint);
 
-    struct timespec t0, t_set;
-    clock_gettime(CLOCK_MONOTONIC, &t0);
-    t_set = t0;
+    ControlState ctrl_state = CONTROL_RUNNING;
+    int restart_requested = 0;
 
-    /* Массив предыдущих значений для 8 каналов */
-    float prev_ai[8];
-    for (int i = 0; i < 8; i++)
-        prev_ai[i] = 0.0f;
-
-    /* Последний успешно выполненный микрошаг (для пост-фазового измерения) */
-    int last_iter_mV = 0;
-    double last_iter_V = 0.0;
-    uint16_t last_code_set = 0;
-    double last_ao_V = 0.0;
-    int last_idx = -1;
-    int last_step_valid = 0;
-
-    long total_microsteps = 0;
-    int first_step = 1;
-    int abort_loops = 0;
-
-    printf("Запуск итерации 8-канального измерения...\n\n");
-
-    for (long cycle = 0;
-         (par.repeats == 0 || cycle < par.repeats) && !g_stop && !abort_loops;
-         ++cycle)
-    {
-        long cycle_num = cycle + 1;
-
-        for (int phase_idx = 0;
-             phase_idx < par.num_phases && !g_stop && !abort_loops;
-             ++phase_idx)
-        {
-            IterPhase *phase = &par.phases[phase_idx];
-            int dir = (phase->step_mV > 0) ? 1 : -1;
-            int idx = 0;
-            int iter_mV = phase->start_mV;
-            int phase_had_steps = 0;
-            last_step_valid = 0;
-            last_idx = -1;
-
-            while (!g_stop &&
-                   ((dir > 0 && iter_mV <= phase->end_mV) ||
-                    (dir < 0 && iter_mV >= phase->end_mV)))
-            {
-                if (phase->pause_ms == 0) {
-                    /* Если пауза между микрошагами нулевая, пропускаем этот шаг */
-                    iter_mV += phase->step_mV;
-                    continue;
-                }
-
-                /* ABSOLUTE ожидание начала шага */
-                if (!first_step) {
-                    timespec_add_ms(&t_set, phase->period_ms);
-                } else {
-                    first_step = 0;
-                }
-
-                clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME, &t_set, NULL);
-
-                phase_had_steps = 1;
-
-                /* Установка AO0 */
-                double iter_V = (double)iter_mV / 1000.0;
-                if (iter_V < AO_MIN_V) iter_V = AO_MIN_V;
-                if (iter_V > AO_MAX_V) iter_V = AO_MAX_V;
-
-                uint16_t code_set = voltage_to_code(iter_V);
-                ret = modbus_write_register(ctx, AO0_REG_ADDR, code_set);
-                if (ret == -1) {
-                    fprintf(stderr, "Ошибка modbus_write_register: %s\n",
-                            modbus_strerror(errno));
-                    abort_loops = 1;
-                    break;
-                }
-
-                /* Ожидание settle */
-                struct timespec t_meas = t_set;
-                timespec_add_ms(&t_meas, phase->settle_ms);
-
-                clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME, &t_meas, NULL);
-
-                /* Время шага */
-                struct timespec t_now;
-                clock_gettime(CLOCK_MONOTONIC, &t_now);
-                double t_ms = timespec_to_ms(&t_now) - timespec_to_ms(&t0);
-
-                /* Измерение 8 каналов */
-                float ai[8];
-                for (int ch = 0; ch < 8; ch++) {
-                    unsigned char st = 0;
-                    int ai_ret = AI_GetFloatValue(fd_io, ch, &ai[ch], &st);
-                    if (ai_ret != 0) {
-                        ai[ch] = prev_ai[ch]; // использовать предыдущее
-                    } else {
-                        prev_ai[ch] = ai[ch];
-                    }
-                }
-
-                /* AO: расчётное значение */
-                double ao_V = code_to_voltage(code_set);
-
-                /* Запись CSV */
-                fprintf(f,
-                    "%ld;%d;%d;%.3f;%d;%.6f;%u;%.6f;"
-                    "%.6f;%.6f;%.6f;%.6f;%.6f;%.6f;%.6f;%.6f\n",
-                    cycle_num,
-                    phase_idx + 1, idx, t_ms,
-                    iter_mV, iter_V,
-                    (unsigned int)code_set,
-                    ao_V,
-                    (double)ai[0], (double)ai[1], (double)ai[2], (double)ai[3],
-                    (double)ai[4], (double)ai[5], (double)ai[6], (double)ai[7]
-                );
-
-                /* Сохранить последнее измерение шага для пост-фазового замера */
-                last_iter_mV = iter_mV;
-                last_iter_V = iter_V;
-                last_code_set = code_set;
-                last_ao_V = ao_V;
-                last_idx = idx;
-                last_step_valid = 1;
-
-                /* stdout — отладочный вывод */
-                printf(
-                    "cycle=%ld phase=%d idx=%d t=%.3f ms iter=%d mV (%.3f В) AO_code=%u AO_V=%.3f "
-                    "AI=[%.6f %.6f %.6f %.6f %.6f %.6f %.6f %.6f]\n",
-                    cycle_num,
-                    phase_idx + 1, idx, t_ms,
-                    iter_mV, iter_V,
-                    (unsigned int)code_set,
-                    ao_V,
-                    ai[0], ai[1], ai[2], ai[3], ai[4], ai[5], ai[6], ai[7]
-                );
-                fflush(stdout);
-
-                ++idx;
-                ++total_microsteps;
-                iter_mV += phase->step_mV;
+    while (!g_stop) {
+        if (ctrl_state == CONTROL_STOPPED) {
+            poll_control_commands(ctrl_ctx, &ctrl_state, &restart_requested);
+            if (ctrl_state == CONTROL_STOPPED && !restart_requested) {
+                struct timespec pause_ts = {0, 100000000L};
+                nanosleep(&pause_ts, NULL);
+                continue;
             }
+        }
 
-            if (abort_loops || g_stop)
+        if (restart_requested) {
+            IterParams new_par;
+            if (load_iter_params(ITER_PARAMS_FILE, &new_par) == 0 &&
+                validate_iter_params(&new_par) == 0) {
+                par = new_par;
+                printf("Параметры итерации обновлены по команде RESTART\n");
+            } else {
+                fprintf(stderr, "RESTART: параметры некорректны, оставляем текущие\n");
+            }
+            restart_requested = 0;
+        }
+
+        struct timespec t0, t_set;
+        clock_gettime(CLOCK_MONOTONIC, &t0);
+        t_set = t0;
+
+        /* Массив предыдущих значений для 8 каналов */
+        float prev_ai[8];
+        for (int i = 0; i < 8; i++)
+            prev_ai[i] = 0.0f;
+
+        /* Последний успешно выполненный микрошаг (для пост-фазового измерения) */
+        int last_iter_mV = 0;
+        double last_iter_V = 0.0;
+        uint16_t last_code_set = 0;
+        double last_ao_V = 0.0;
+        int last_idx = -1;
+        int last_step_valid = 0;
+
+        long total_microsteps = 0;
+        int first_step = 1;
+        int abort_loops = 0;
+
+        printf("Запуск итерации 8-канального измерения...\n\n");
+
+        for (long cycle = 0;
+             (par.repeats == 0 || cycle < par.repeats) && !g_stop && !abort_loops &&
+             ctrl_state == CONTROL_RUNNING && !restart_requested;
+             ++cycle)
+        {
+            poll_control_commands(ctrl_ctx, &ctrl_state, &restart_requested);
+            if (ctrl_state == CONTROL_STOPPED || restart_requested || g_stop)
                 break;
 
-            if (phase_had_steps) {
-                /* Дополнительное измерение во время паузы между шагами итерации */
-                if (phase->pause_ms > 0 && last_step_valid) {
-                    struct timespec t_mid_phase = t_set;
-                    timespec_add_ms(&t_mid_phase, phase->pause_ms / 2);
-                    clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME, &t_mid_phase, NULL);
+            long cycle_num = cycle + 1;
 
-                    struct timespec t_mid_now;
-                    clock_gettime(CLOCK_MONOTONIC, &t_mid_now);
-                    double t_mid_ms = timespec_to_ms(&t_mid_now) - timespec_to_ms(&t0);
+            for (int phase_idx = 0;
+                 phase_idx < par.num_phases && !g_stop && !abort_loops &&
+                 ctrl_state == CONTROL_RUNNING && !restart_requested;
+                 ++phase_idx)
+            {
+                poll_control_commands(ctrl_ctx, &ctrl_state, &restart_requested);
+                if (ctrl_state == CONTROL_STOPPED || restart_requested || g_stop)
+                    break;
 
-                    float ai_mid[8];
+                IterPhase *phase = &par.phases[phase_idx];
+                int dir = (phase->step_mV > 0) ? 1 : -1;
+                int idx = 0;
+                int iter_mV = phase->start_mV;
+                int phase_had_steps = 0;
+                last_step_valid = 0;
+                last_idx = -1;
+
+                while (!g_stop && ctrl_state == CONTROL_RUNNING && !restart_requested &&
+                       ((dir > 0 && iter_mV <= phase->end_mV) ||
+                        (dir < 0 && iter_mV >= phase->end_mV)))
+                {
+                    poll_control_commands(ctrl_ctx, &ctrl_state, &restart_requested);
+                    if (ctrl_state == CONTROL_STOPPED || restart_requested || g_stop)
+                        break;
+
+                    if (phase->pause_ms == 0) {
+                        /* Если пауза между микрошагами нулевая, пропускаем этот шаг */
+                        iter_mV += phase->step_mV;
+                        continue;
+                    }
+
+                    /* ABSOLUTE ожидание начала шага */
+                    if (!first_step) {
+                        timespec_add_ms(&t_set, phase->period_ms);
+                    } else {
+                        first_step = 0;
+                    }
+
+                    clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME, &t_set, NULL);
+
+                    phase_had_steps = 1;
+
+                    /* Установка AO0 */
+                    double iter_V = (double)iter_mV / 1000.0;
+                    if (iter_V < AO_MIN_V) iter_V = AO_MIN_V;
+                    if (iter_V > AO_MAX_V) iter_V = AO_MAX_V;
+
+                    uint16_t code_set = voltage_to_code(iter_V);
+                    ret = modbus_write_register(ctx, AO0_REG_ADDR, code_set);
+                    if (ret == -1) {
+                        fprintf(stderr, "Ошибка modbus_write_register: %s\n",
+                                modbus_strerror(errno));
+                        abort_loops = 1;
+                        break;
+                    }
+
+                    /* Ожидание settle */
+                    struct timespec t_meas = t_set;
+                    timespec_add_ms(&t_meas, phase->settle_ms);
+
+                    clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME, &t_meas, NULL);
+
+                    /* Время шага */
+                    struct timespec t_now;
+                    clock_gettime(CLOCK_MONOTONIC, &t_now);
+                    double t_ms = timespec_to_ms(&t_now) - timespec_to_ms(&t0);
+
+                    /* Измерение 8 каналов */
+                    float ai[8];
                     for (int ch = 0; ch < 8; ch++) {
                         unsigned char st = 0;
-                        int ai_ret = AI_GetFloatValue(fd_io, ch, &ai_mid[ch], &st);
+                        int ai_ret = AI_GetFloatValue(fd_io, ch, &ai[ch], &st);
                         if (ai_ret != 0) {
-                            ai_mid[ch] = prev_ai[ch];
+                            ai[ch] = prev_ai[ch]; // использовать предыдущее
                         } else {
-                            prev_ai[ch] = ai_mid[ch];
+                            prev_ai[ch] = ai[ch];
                         }
                     }
 
-                    int mid_idx = (last_idx >= 0) ? last_idx : 0;
+                    /* AO: расчётное значение */
+                    double ao_V = code_to_voltage(code_set);
 
+                    /* Запись CSV */
                     fprintf(f,
                         "%ld;%d;%d;%.3f;%d;%.6f;%u;%.6f;"
                         "%.6f;%.6f;%.6f;%.6f;%.6f;%.6f;%.6f;%.6f\n",
                         cycle_num,
-                        phase_idx + 1, mid_idx, t_mid_ms,
-                        last_iter_mV, last_iter_V,
-                        (unsigned int)last_code_set,
-                        last_ao_V,
-                        (double)ai_mid[0], (double)ai_mid[1], (double)ai_mid[2], (double)ai_mid[3],
-                        (double)ai_mid[4], (double)ai_mid[5], (double)ai_mid[6], (double)ai_mid[7]
+                        phase_idx + 1, idx, t_ms,
+                        iter_mV, iter_V,
+                        (unsigned int)code_set,
+                        ao_V,
+                        (double)ai[0], (double)ai[1], (double)ai[2], (double)ai[3],
+                        (double)ai[4], (double)ai[5], (double)ai[6], (double)ai[7]
                     );
 
+                    /* Сохранить последнее измерение шага для пост-фазового замера */
+                    last_iter_mV = iter_mV;
+                    last_iter_V = iter_V;
+                    last_code_set = code_set;
+                    last_ao_V = ao_V;
+                    last_idx = idx;
+                    last_step_valid = 1;
+
+                    /* stdout — отладочный вывод */
                     printf(
-                        "cycle=%ld phase=%d idx=%d (post-step pause) t=%.3f ms iter=%d mV (%.3f В) AO_code=%u AO_V=%.3f "
+                        "cycle=%ld phase=%d idx=%d t=%.3f ms iter=%d mV (%.3f В) AO_code=%u AO_V=%.3f "
                         "AI=[%.6f %.6f %.6f %.6f %.6f %.6f %.6f %.6f]\n",
                         cycle_num,
-                        phase_idx + 1, mid_idx, t_mid_ms,
-                        last_iter_mV, last_iter_V,
-                        (unsigned int)last_code_set,
-                        last_ao_V,
-                        ai_mid[0], ai_mid[1], ai_mid[2], ai_mid[3], ai_mid[4], ai_mid[5], ai_mid[6], ai_mid[7]
+                        phase_idx + 1, idx, t_ms,
+                        iter_mV, iter_V,
+                        (unsigned int)code_set,
+                        ao_V,
+                        ai[0], ai[1], ai[2], ai[3], ai[4], ai[5], ai[6], ai[7]
                     );
                     fflush(stdout);
+
+                    ++idx;
+                    ++total_microsteps;
+                    iter_mV += phase->step_mV;
                 }
 
-                wait_with_pause(&t_set, phase->pause_ms);
+                if (abort_loops || g_stop || ctrl_state == CONTROL_STOPPED || restart_requested)
+                    break;
+
+                if (phase_had_steps) {
+                    /* Дополнительное измерение во время паузы между шагами итерации */
+                    if (phase->pause_ms > 0 && last_step_valid) {
+                        struct timespec t_mid_phase = t_set;
+                        timespec_add_ms(&t_mid_phase, phase->pause_ms / 2);
+                        clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME, &t_mid_phase, NULL);
+
+                        struct timespec t_mid_now;
+                        clock_gettime(CLOCK_MONOTONIC, &t_mid_now);
+                        double t_mid_ms = timespec_to_ms(&t_mid_now) - timespec_to_ms(&t0);
+
+                        float ai_mid[8];
+                        for (int ch = 0; ch < 8; ch++) {
+                            unsigned char st = 0;
+                            int ai_ret = AI_GetFloatValue(fd_io, ch, &ai_mid[ch], &st);
+                            if (ai_ret != 0) {
+                                ai_mid[ch] = prev_ai[ch];
+                            } else {
+                                prev_ai[ch] = ai_mid[ch];
+                            }
+                        }
+
+                        int mid_idx = (last_idx >= 0) ? last_idx : 0;
+
+                        fprintf(f,
+                            "%ld;%d;%d;%.3f;%d;%.6f;%u;%.6f;"
+                            "%.6f;%.6f;%.6f;%.6f;%.6f;%.6f;%.6f;%.6f\n",
+                            cycle_num,
+                            phase_idx + 1, mid_idx, t_mid_ms,
+                            last_iter_mV, last_iter_V,
+                            (unsigned int)last_code_set,
+                            last_ao_V,
+                            (double)ai_mid[0], (double)ai_mid[1], (double)ai_mid[2], (double)ai_mid[3],
+                            (double)ai_mid[4], (double)ai_mid[5], (double)ai_mid[6], (double)ai_mid[7]
+                        );
+
+                        printf(
+                            "cycle=%ld phase=%d idx=%d (post-step pause) t=%.3f ms iter=%d mV (%.3f В) AO_code=%u AO_V=%.3f "
+                            "AI=[%.6f %.6f %.6f %.6f %.6f %.6f %.6f %.6f]\n",
+                            cycle_num,
+                            phase_idx + 1, mid_idx, t_mid_ms,
+                            last_iter_mV, last_iter_V,
+                            (unsigned int)last_code_set,
+                            last_ao_V,
+                            ai_mid[0], ai_mid[1], ai_mid[2], ai_mid[3], ai_mid[4], ai_mid[5], ai_mid[6], ai_mid[7]
+                        );
+                        fflush(stdout);
+                    }
+
+                    wait_with_pause(&t_set, phase->pause_ms);
+                }
             }
-        }
 
-        if (abort_loops || g_stop)
-            break;
+            if (abort_loops || g_stop || ctrl_state == CONTROL_STOPPED || restart_requested)
+                break;
 
-        /* Перечитать файл уставок после завершения цикла */
-        IterParams new_par;
-        if (load_iter_params(ITER_PARAMS_FILE, &new_par) == 0) {
-            if (validate_iter_params(&new_par) == 0) {
-                par = new_par;
-                printf("Параметры итерации обновлены после цикла %ld\n",
-                       cycle_num);
+            /* Перечитать файл уставок после завершения цикла */
+            IterParams new_par;
+            if (load_iter_params(ITER_PARAMS_FILE, &new_par) == 0) {
+                if (validate_iter_params(&new_par) == 0) {
+                    par = new_par;
+                    printf("Параметры итерации обновлены после цикла %ld\n",
+                           cycle_num);
+                } else {
+                    fprintf(stderr,
+                            "Новые параметры из файла некорректны, оставляем предыдущие\n");
+                }
             } else {
                 fprintf(stderr,
-                        "Новые параметры из файла некорректны, оставляем предыдущие\n");
+                        "Не удалось перечитать файл параметров, оставляем предыдущие\n");
             }
-        } else {
-            fprintf(stderr,
-                    "Не удалось перечитать файл параметров, оставляем предыдущие\n");
         }
-    }
 
-    printf("\nЗавершение. Микрошагов всего: %ld\n", total_microsteps);
+        printf("\nЗавершение. Микрошагов всего: %ld\n", total_microsteps);
+
+        if (restart_requested || ctrl_state == CONTROL_STOPPED)
+            continue;
+
+        break;
+    }
 
     modbus_close(ctx);
     modbus_free(ctx);
+    if (ctrl_ctx) {
+        modbus_close(ctrl_ctx);
+        modbus_free(ctrl_ctx);
+    }
     AdamIO_Close(fd_io);
     fclose(f);
 
