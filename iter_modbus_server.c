@@ -185,7 +185,7 @@ static int parse_int(const char *s, int *out)
     return 0;
 }
 
-static int load_iter_params(const char *path, IterParams *p)
+static int load_iter_params(const char *path, IterParams *p, int *parsed_values)
 {
     FILE *fp = fopen(path, "r");
     init_iter_params(p);
@@ -194,6 +194,7 @@ static int load_iter_params(const char *path, IterParams *p)
         return -1;
     }
 
+    int parsed = 0;
     char line[256];
     while (fgets(line, sizeof(line), fp)) {
         strtrim(line);
@@ -216,21 +217,27 @@ static int load_iter_params(const char *path, IterParams *p)
         if (strcmp(suffix, "start_mV") == 0 && parse_int(val, &v) == 0) {
             p->phases[phase_idx].start_mV = v;
             update_phase_count(p, phase_idx);
+            parsed++;
         } else if (strcmp(suffix, "end_mV") == 0 && parse_int(val, &v) == 0) {
             p->phases[phase_idx].end_mV = v;
             update_phase_count(p, phase_idx);
+            parsed++;
         } else if (strcmp(suffix, "step_mV") == 0 && parse_int(val, &v) == 0) {
             p->phases[phase_idx].step_mV = v;
             update_phase_count(p, phase_idx);
+            parsed++;
         } else if (strcmp(suffix, "period_ms") == 0 && parse_int(val, &v) == 0) {
             p->phases[phase_idx].period_ms = v;
             update_phase_count(p, phase_idx);
+            parsed++;
         } else if (strcmp(suffix, "settle_ms") == 0 && parse_int(val, &v) == 0) {
             p->phases[phase_idx].settle_ms = v;
             update_phase_count(p, phase_idx);
+            parsed++;
         } else if (strcmp(suffix, "pause_ms") == 0 && parse_int(val, &v) == 0) {
             p->phases[phase_idx].pause_ms = v;
             update_phase_count(p, phase_idx);
+            parsed++;
         } else if (strcmp(key, "repeats") == 0) {
             long rep = strtol(val, NULL, 10);
             if (rep == 0 || rep == -1) {
@@ -238,10 +245,12 @@ static int load_iter_params(const char *path, IterParams *p)
             } else {
                 p->repeats = rep < 0 ? 1 : rep;
             }
+            parsed++;
         } else if (strcmp(key, "phases") == 0) {
             int np = 0;
             if (parse_int(val, &np) == 0 && np >= 1 && np <= MAX_PHASES)
                 p->num_phases = np;
+            parsed++;
         }
     }
 
@@ -250,6 +259,9 @@ static int load_iter_params(const char *path, IterParams *p)
         p->num_phases = 1;
     if (p->num_phases > MAX_PHASES)
         p->num_phases = MAX_PHASES;
+
+    if (parsed_values)
+        *parsed_values = parsed;
     return 0;
 }
 
@@ -381,10 +393,18 @@ static void reload_params_if_updated(const char *path, IterParams *params, uint1
     if (*cached_mtime != 0 && current_mtime == *cached_mtime)
         return;
 
-    if (load_iter_params(path, params) == 0) {
-        *cached_mtime = current_mtime;
-        params_to_registers(params, regs, reg_count);
-        printf("iter_params.txt обновлён извне, значения перечитаны в регистры\n");
+    IterParams new_params;
+    int parsed = 0;
+    if (load_iter_params(path, &new_params, &parsed) == 0) {
+        if (parsed > 0) {
+            *params = new_params;
+            *cached_mtime = current_mtime;
+            params_to_registers(params, regs, reg_count);
+            printf("iter_params.txt обновлён извне, значения перечитаны в регистры\n");
+        } else {
+            fprintf(stderr,
+                    "iter_modbus_server: пропустили перезагрузку iter_params.txt — файл пуст или в нём нет значений\n");
+        }
     }
 }
 
@@ -468,7 +488,7 @@ int main(void)
 
     IterParams params;
     time_t params_mtime = 0;
-    load_iter_params(PARAMS_FILE, &params);
+    load_iter_params(PARAMS_FILE, &params, NULL);
     read_file_mtime(PARAMS_FILE, &params_mtime);
 
     modbus_t *ctx = modbus_new_tcp("0.0.0.0", MODBUS_PORT);
