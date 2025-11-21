@@ -3,29 +3,43 @@
  *
  * Простой Modbus/TCP-сервер для ADAM-6717, который отражает содержимое
  * /home/root/iter_params.txt в Holding Registers и позволяет панели
- * оператора читать/писать уставки итерации в виде 32-битных целых.
+ * оператора читать/писать уставки итерации в виде 32-битных целых
+ * (исходный формат) и продублированных 32-битных float.
  *
- * Карта регистров (Holding Registers, 0-базовая адресация, int32 BE):
- *   0-1   — протокол/сборка, int32 (1)
- *   2-3   — repeats (кол-во циклов, 0 = бесконечно)
- *   4-5   — phases (число фаз 1..5)
- *   Далее по 12 регистров (6 int32) на каждую фазу (MAX_PHASES = 5):
- *       start_mV, end_mV, step_mV, period_ms, settle_ms, pause_ms
- *     Фаза 1: регистры 6-17, фаза 2: 18-29, ... фаза 5: 54-65.
+ * Карта регистров (Holding Registers, 0-базовая адресация, порядок слов
+ * big-endian везде):
+ *   INT-блок (совместимость, int32 BE), 0–65:
+ *     0-1   — протокол/сборка, int32 (1)
+ *     2-3   — repeats (кол-во циклов, 0 = бесконечно)
+ *     4-5   — phases (число фаз 1..5)
+ *     Далее по 12 регистров (6 int32) на каждую фазу (MAX_PHASES = 5):
+ *         start_mV, end_mV, step_mV, period_ms, settle_ms, pause_ms
+ *       Фаза 1: регистры 6-17, фаза 2: 18-29, ... фаза 5: 54-65.
+ *   FLOAT-блок (дубль тех же уставок для HMI), 66–131:
+ *     Структура идентичная INT-блоку, но все значения закодированы как
+ *     IEEE-754 float (32 бита) с тем же порядком слов (big-endian word
+ *     order). Поддерживает запись/чтение HMI в формате float без потери
+ *     младших единиц. При записи в FLOAT-блок значения округляются до int
+ *     и сохраняются в iter_params.txt.
  *
- * Формат int32: порядок слов big-endian (старшее слово первым), как это
- * привычно в HMI при работе с 32-битными регистрами Modbus.
+ * Для HMI: каждое 32-битное значение занимает ДВА последовательных регистра.
+ * Сервер использует порядок big-endian (старшее слово по меньшему адресу),
+ * поэтому на панели нужно писать/читать пары регистров с чётного адреса в
+ * порядке HI→LO. Если HMI выставлена на little-endian word order, включите
+ * swap слов на её стороне, чтобы избежать «сдвинутых» значений.
  *
- * После записи регистров сервер пересчитывает значения в целые параметры
- * итерации, сохраняет их в iter_params.txt (перетирая комментарии) и
- * возвращает в регистры уже нормализованные данные (ограничение фаз
- * 1..MAX_PHASES и округление значений до int).
+ * После записи сервер пересчитывает значения (из INT- или FLOAT-блока),
+ * сохраняет их в iter_params.txt (перетирая комментарии) и возвращает в
+ * регистры нормализованные данные (ограничение фаз 1..MAX_PHASES и
+ * округление значений до int).
  */
 
 #include <ctype.h>
 #include <errno.h>
+#include <limits.h>
 #include <modbus/modbus.h>
 #include <signal.h>
+#include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -36,9 +50,16 @@
 #define MODBUS_PORT 1502
 #define MAX_PHASES 5
 
-#define HEADER_REGS 6
-#define PHASE_REGS_PER_PHASE 12
-#define HOLDING_REG_COUNT (HEADER_REGS + MAX_PHASES * PHASE_REGS_PER_PHASE)
+#define INT_HEADER_REGS 6
+#define INT_PHASE_REGS_PER_PHASE 12
+#define INT_HOLDING_REG_COUNT (INT_HEADER_REGS + MAX_PHASES * INT_PHASE_REGS_PER_PHASE)
+
+#define FLOAT_HEADER_REGS 6
+#define FLOAT_PHASE_REGS_PER_PHASE 12
+#define FLOAT_BASE INT_HOLDING_REG_COUNT
+#define FLOAT_HOLDING_REG_COUNT (FLOAT_HEADER_REGS + MAX_PHASES * FLOAT_PHASE_REGS_PER_PHASE)
+
+#define HOLDING_REG_COUNT (INT_HOLDING_REG_COUNT + FLOAT_HOLDING_REG_COUNT)
 
 typedef struct {
     int start_mV;
@@ -268,6 +289,41 @@ static int32_t regs_to_int32(const uint16_t *regs)
     return (int32_t)u;
 }
 
+static void float_to_regs(float v, uint16_t *regs)
+{
+    union {
+        float f;
+        uint32_t u;
+    } conv;
+
+    conv.f = v;
+    regs[0] = (uint16_t)((conv.u >> 16) & 0xFFFFu);
+    regs[1] = (uint16_t)(conv.u & 0xFFFFu);
+}
+
+static float regs_to_float(const uint16_t *regs)
+{
+    union {
+        float f;
+        uint32_t u;
+    } conv;
+
+    conv.u = ((uint32_t)regs[0] << 16) | (uint32_t)regs[1];
+    return conv.f;
+}
+
+static int float_to_int_rounded(float v)
+{
+    if (v > (float)INT_MAX)
+        return INT_MAX;
+    if (v < (float)INT_MIN)
+        return INT_MIN;
+
+    if (v >= 0.0f)
+        return (int)(v + 0.5f);
+    return (int)(v - 0.5f);
+}
+
 static void params_to_registers(const IterParams *p, uint16_t *regs, int reg_count)
 {
     if (reg_count < HOLDING_REG_COUNT)
@@ -280,7 +336,7 @@ static void params_to_registers(const IterParams *p, uint16_t *regs, int reg_cou
     int32_to_regs((int32_t)p->num_phases, &regs[4]);
 
     for (int i = 0; i < MAX_PHASES; ++i) {
-        int base = HEADER_REGS + i * PHASE_REGS_PER_PHASE;
+        int base = INT_HEADER_REGS + i * INT_PHASE_REGS_PER_PHASE;
         int32_to_regs((int32_t)p->phases[i].start_mV, &regs[base + 0]);
         int32_to_regs((int32_t)p->phases[i].end_mV, &regs[base + 2]);
         int32_to_regs((int32_t)p->phases[i].step_mV, &regs[base + 4]);
@@ -288,32 +344,75 @@ static void params_to_registers(const IterParams *p, uint16_t *regs, int reg_cou
         int32_to_regs((int32_t)p->phases[i].settle_ms, &regs[base + 8]);
         int32_to_regs((int32_t)p->phases[i].pause_ms, &regs[base + 10]);
     }
-}
 
-static void registers_to_params(const uint16_t *regs, IterParams *p)
-{
-    long repeats = (long)regs_to_int32(&regs[2]);
-    if (repeats == 0 || repeats == -1) {
-        p->repeats = repeats;
-    } else {
-        p->repeats = repeats < 0 ? 1 : repeats;
-    }
-
-    long num_phases = (long)regs_to_int32(&regs[4]);
-    if (num_phases < 1)
-        num_phases = 1;
-    if (num_phases > MAX_PHASES)
-        num_phases = MAX_PHASES;
-    p->num_phases = (int)num_phases;
+    int float_base = FLOAT_BASE;
+    float_to_regs(1.0f, &regs[float_base + 0]);
+    float_to_regs((float)p->repeats, &regs[float_base + 2]);
+    float_to_regs((float)p->num_phases, &regs[float_base + 4]);
 
     for (int i = 0; i < MAX_PHASES; ++i) {
-        int base = HEADER_REGS + i * PHASE_REGS_PER_PHASE;
-        p->phases[i].start_mV = (int)regs_to_int32(&regs[base + 0]);
-        p->phases[i].end_mV = (int)regs_to_int32(&regs[base + 2]);
-        p->phases[i].step_mV = (int)regs_to_int32(&regs[base + 4]);
-        p->phases[i].period_ms = (int)regs_to_int32(&regs[base + 6]);
-        p->phases[i].settle_ms = (int)regs_to_int32(&regs[base + 8]);
-        p->phases[i].pause_ms = (int)regs_to_int32(&regs[base + 10]);
+        int base = float_base + FLOAT_HEADER_REGS + i * FLOAT_PHASE_REGS_PER_PHASE;
+        float_to_regs((float)p->phases[i].start_mV, &regs[base + 0]);
+        float_to_regs((float)p->phases[i].end_mV, &regs[base + 2]);
+        float_to_regs((float)p->phases[i].step_mV, &regs[base + 4]);
+        float_to_regs((float)p->phases[i].period_ms, &regs[base + 6]);
+        float_to_regs((float)p->phases[i].settle_ms, &regs[base + 8]);
+        float_to_regs((float)p->phases[i].pause_ms, &regs[base + 10]);
+    }
+}
+
+static void registers_to_params(const uint16_t *regs, IterParams *p, int use_float_block)
+{
+    if (use_float_block) {
+        float repeats = regs_to_float(&regs[FLOAT_BASE + 2]);
+        int rep_i = float_to_int_rounded(repeats);
+        if (rep_i == 0 || rep_i == -1) {
+            p->repeats = (long)rep_i;
+        } else {
+            p->repeats = rep_i < 0 ? 1 : (long)rep_i;
+        }
+
+        float num_phases = regs_to_float(&regs[FLOAT_BASE + 4]);
+        int np = float_to_int_rounded(num_phases);
+        if (np < 1)
+            np = 1;
+        if (np > MAX_PHASES)
+            np = MAX_PHASES;
+        p->num_phases = np;
+
+        for (int i = 0; i < MAX_PHASES; ++i) {
+            int base = FLOAT_BASE + FLOAT_HEADER_REGS + i * FLOAT_PHASE_REGS_PER_PHASE;
+            p->phases[i].start_mV = float_to_int_rounded(regs_to_float(&regs[base + 0]));
+            p->phases[i].end_mV = float_to_int_rounded(regs_to_float(&regs[base + 2]));
+            p->phases[i].step_mV = float_to_int_rounded(regs_to_float(&regs[base + 4]));
+            p->phases[i].period_ms = float_to_int_rounded(regs_to_float(&regs[base + 6]));
+            p->phases[i].settle_ms = float_to_int_rounded(regs_to_float(&regs[base + 8]));
+            p->phases[i].pause_ms = float_to_int_rounded(regs_to_float(&regs[base + 10]));
+        }
+    } else {
+        long repeats = (long)regs_to_int32(&regs[2]);
+        if (repeats == 0 || repeats == -1) {
+            p->repeats = repeats;
+        } else {
+            p->repeats = repeats < 0 ? 1 : repeats;
+        }
+
+        long num_phases = (long)regs_to_int32(&regs[4]);
+        if (num_phases < 1)
+            num_phases = 1;
+        if (num_phases > MAX_PHASES)
+            num_phases = MAX_PHASES;
+        p->num_phases = (int)num_phases;
+
+        for (int i = 0; i < MAX_PHASES; ++i) {
+            int base = INT_HEADER_REGS + i * INT_PHASE_REGS_PER_PHASE;
+            p->phases[i].start_mV = (int)regs_to_int32(&regs[base + 0]);
+            p->phases[i].end_mV = (int)regs_to_int32(&regs[base + 2]);
+            p->phases[i].step_mV = (int)regs_to_int32(&regs[base + 4]);
+            p->phases[i].period_ms = (int)regs_to_int32(&regs[base + 6]);
+            p->phases[i].settle_ms = (int)regs_to_int32(&regs[base + 8]);
+            p->phases[i].pause_ms = (int)regs_to_int32(&regs[base + 10]);
+        }
     }
 }
 
@@ -321,6 +420,13 @@ static int is_write_function(int func)
 {
     return func == MODBUS_FC_WRITE_SINGLE_REGISTER ||
            func == MODBUS_FC_WRITE_MULTIPLE_REGISTERS;
+}
+
+static bool write_hits_block(int start_reg, int reg_count, int block_start, int block_size)
+{
+    int end_reg = start_reg + reg_count - 1;
+    int block_end = block_start + block_size - 1;
+    return end_reg >= block_start && start_reg <= block_end;
 }
 
 int main(void)
@@ -377,7 +483,15 @@ int main(void)
             }
 
             if (is_write_function(func)) {
-                registers_to_params(mapping->tab_registers, &params);
+                int start_reg = ((int)query[8] << 8) | (int)query[9];
+                int reg_count = 1;
+                if (func == MODBUS_FC_WRITE_MULTIPLE_REGISTERS)
+                    reg_count = ((int)query[10] << 8) | (int)query[11];
+
+                bool hit_float = write_hits_block(start_reg, reg_count, FLOAT_BASE, FLOAT_HOLDING_REG_COUNT);
+                bool prefer_float = hit_float;
+
+                registers_to_params(mapping->tab_registers, &params, prefer_float);
                 save_iter_params(PARAMS_FILE, &params);
                 params_to_registers(&params, mapping->tab_registers, mapping->nb_registers);
             }
