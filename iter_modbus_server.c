@@ -21,10 +21,13 @@
  *     order). Поддерживает запись/чтение HMI в формате float без потери
  *     младших единиц. При записи в FLOAT-блок значения округляются до int
  *     и сохраняются в iter_params.txt.
- *   Регистр управления, 132 (Holding Register):
+ *   Регистры управления, 132–133 (Holding Registers):
  *     бит 0 (0x0001) — START/RESUME
  *     бит 1 (0x0002) — STOP (переход в остановку без выхода из процесса)
  *     бит 2 (0x0004) — RESTART (перечитать iter_params.txt и начать с цикла 1)
+ *     Пара 132–133 также используется как float (порядок слов как в FLOAT-блоке)
+ *     для HMI: значения 1.0/2.0/3.0 транслируются в START/STOP/RESTART и
+ *     отражаются в обоих регистрах в формате float (1-базовая адресация: 133/134).
  *
  * Для HMI: каждое 32-битное значение занимает ДВА последовательных регистра.
  * Сервер использует порядок big-endian (старшее слово по меньшему адресу),
@@ -41,6 +44,7 @@
 #include <ctype.h>
 #include <errno.h>
 #include <limits.h>
+#include <math.h>
 #include <modbus/modbus.h>
 #include <signal.h>
 #include <stdbool.h>
@@ -66,9 +70,13 @@
 #define FLOAT_HOLDING_REG_COUNT (FLOAT_HEADER_REGS + MAX_PHASES * FLOAT_PHASE_REGS_PER_PHASE)
 
 #define CONTROL_REG_ADDR (FLOAT_BASE + FLOAT_HOLDING_REG_COUNT)
-#define CONTROL_REG_COUNT 1
+#define CONTROL_REG_COUNT 2
 
 #define HOLDING_REG_COUNT (INT_HOLDING_REG_COUNT + FLOAT_HOLDING_REG_COUNT + CONTROL_REG_COUNT)
+
+#define CMD_START 0x0001
+#define CMD_STOP 0x0002
+#define CMD_RESTART 0x0004
 
 typedef struct {
     int start_mV;
@@ -345,14 +353,29 @@ static int float_to_int_rounded(float v)
     return (int)(v - 0.5f);
 }
 
+static float control_bits_to_float(uint16_t control_bits)
+{
+    if (control_bits & CMD_RESTART)
+        return 3.0f;
+    if (control_bits & CMD_STOP)
+        return 2.0f;
+    if (control_bits & CMD_START)
+        return 1.0f;
+    return 0.0f;
+}
+
 static void params_to_registers(const IterParams *p, uint16_t *regs, int reg_count)
 {
     if (reg_count < HOLDING_REG_COUNT)
         return;
 
-    uint16_t control_shadow = 0;
-    if (reg_count > CONTROL_REG_ADDR)
-        control_shadow = regs[CONTROL_REG_ADDR];
+    uint16_t control_shadow_bits = 0;
+    float control_shadow_float = 0.0f;
+    if (reg_count > CONTROL_REG_ADDR) {
+        control_shadow_bits = regs[CONTROL_REG_ADDR];
+        if (reg_count > CONTROL_REG_ADDR + 1)
+            control_shadow_float = regs_to_float(&regs[CONTROL_REG_ADDR]);
+    }
 
     memset(regs, 0, sizeof(uint16_t) * reg_count);
 
@@ -385,7 +408,11 @@ static void params_to_registers(const IterParams *p, uint16_t *regs, int reg_cou
         float_to_regs((float)p->phases[i].pause_ms, &regs[base + 10]);
     }
 
-    regs[CONTROL_REG_ADDR] = control_shadow;
+    float control_value = control_shadow_float;
+    if (control_value == 0.0f && control_shadow_bits != 0)
+        control_value = control_bits_to_float(control_shadow_bits);
+
+    float_to_regs(control_value, &regs[CONTROL_REG_ADDR]);
 }
 
 static int read_file_mtime(const char *path, time_t *out)
@@ -574,6 +601,7 @@ int main(void)
 
                 bool hit_int = write_hits_block(start_reg, reg_count, 0, INT_HOLDING_REG_COUNT);
                 bool hit_float = write_hits_block(start_reg, reg_count, FLOAT_BASE, FLOAT_HOLDING_REG_COUNT);
+                bool hit_control_float = write_hits_block(start_reg, reg_count, CONTROL_REG_ADDR, CONTROL_REG_COUNT);
 
                 IterParams new_params = params;
                 IterParams int_view;
@@ -583,6 +611,21 @@ int main(void)
                     registers_int_block_to_params(mapping->tab_registers, &int_view);
                 if (hit_float)
                     registers_float_block_to_params(mapping->tab_registers, &float_view);
+                if (hit_control_float && reg_count >= CONTROL_REG_COUNT) {
+                    float cmd = regs_to_float(&mapping->tab_registers[CONTROL_REG_ADDR]);
+                    uint16_t control_bits = 0;
+                    if (fabsf(cmd - 1.0f) < 0.001f)
+                        control_bits = CMD_START;
+                    else if (fabsf(cmd - 2.0f) < 0.001f)
+                        control_bits = CMD_STOP;
+                    else if (fabsf(cmd - 3.0f) < 0.001f)
+                        control_bits = CMD_RESTART;
+
+                    if (control_bits != 0) {
+                        mapping->tab_registers[CONTROL_REG_ADDR] = control_bits;
+                        mapping->tab_registers[CONTROL_REG_ADDR + 1] = 0;
+                    }
+                }
 
                 if (hit_int && write_hits_range(start_reg, reg_count, 2, 2))
                     new_params.repeats = int_view.repeats;
