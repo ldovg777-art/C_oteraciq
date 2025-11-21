@@ -393,6 +393,8 @@ static void reload_params_if_updated(const char *path, IterParams *params, uint1
     if (*cached_mtime != 0 && current_mtime == *cached_mtime)
         return;
 
+    static time_t last_warn_mtime = 0;
+
     IterParams new_params;
     int parsed = 0;
     if (load_iter_params(path, &new_params, &parsed) == 0) {
@@ -401,9 +403,13 @@ static void reload_params_if_updated(const char *path, IterParams *params, uint1
             *cached_mtime = current_mtime;
             params_to_registers(params, regs, reg_count);
             printf("iter_params.txt обновлён извне, значения перечитаны в регистры\n");
+            last_warn_mtime = 0;
         } else {
-            fprintf(stderr,
-                    "iter_modbus_server: пропустили перезагрузку iter_params.txt — файл пуст или в нём нет значений\n");
+            if (last_warn_mtime != current_mtime) {
+                fprintf(stderr,
+                        "iter_modbus_server: пропустили перезагрузку iter_params.txt — файл пуст или ещё записывается внешним редактором\n");
+                last_warn_mtime = current_mtime;
+            }
         }
     }
 }
