@@ -19,6 +19,7 @@
 #include <stdint.h>
 #include <errno.h>
 #include <signal.h>
+#include <math.h>
 #include <time.h>
 #include <unistd.h>
 #include <string.h>
@@ -38,6 +39,7 @@
 #define MODBUS_CTRL_SLAVE 1
 
 #define CONTROL_REG_ADDR 132
+#define CONTROL_REG_COUNT 2
 #define CMD_START   0x0001
 #define CMD_STOP    0x0002
 #define CMD_RESTART 0x0004
@@ -312,16 +314,52 @@ typedef enum {
     CONTROL_STOPPED = 1,
 } ControlState;
 
+static float regs_to_float(const uint16_t *regs)
+{
+    union {
+        float f;
+        uint32_t u;
+    } conv;
+
+    conv.u = ((uint32_t)regs[0] << 16) | (uint32_t)regs[1];
+    return conv.f;
+}
+
 static void poll_control_commands(modbus_t *ctx, ControlState *state, int *restart_requested)
 {
     if (!ctx || !state)
         return;
 
-    uint16_t reg = 0;
-    int rc = modbus_read_registers(ctx, CONTROL_REG_ADDR, 1, &reg);
+    uint16_t regs[CONTROL_REG_COUNT] = {0};
+    int rc = modbus_read_registers(ctx, CONTROL_REG_ADDR, CONTROL_REG_COUNT, regs);
     if (rc == -1)
         return;
 
+    float cmd = regs_to_float(regs);
+    uint16_t mask = 0;
+    if (fabsf(cmd - 1.0f) < 0.001f)
+        mask = CMD_START;
+    else if (fabsf(cmd - 2.0f) < 0.001f)
+        mask = CMD_STOP;
+    else if (fabsf(cmd - 3.0f) < 0.001f)
+        mask = CMD_RESTART;
+
+    if (mask != 0) {
+        uint16_t zeros[CONTROL_REG_COUNT] = {0};
+        (void)modbus_write_registers(ctx, CONTROL_REG_ADDR, CONTROL_REG_COUNT, zeros);
+
+        if (mask & CMD_RESTART) {
+            *restart_requested = 1;
+            *state = CONTROL_RUNNING;
+        }
+        if (mask & CMD_STOP)
+            *state = CONTROL_STOPPED;
+        if (mask & CMD_START)
+            *state = CONTROL_RUNNING;
+        return;
+    }
+
+    uint16_t reg = regs[0];
     if (reg == 0)
         return;
 
