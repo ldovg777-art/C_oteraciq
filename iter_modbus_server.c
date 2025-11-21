@@ -429,6 +429,11 @@ static bool write_hits_block(int start_reg, int reg_count, int block_start, int 
     return end_reg >= block_start && start_reg <= block_end;
 }
 
+static bool write_hits_range(int start_reg, int reg_count, int range_start, int range_size)
+{
+    return write_hits_block(start_reg, reg_count, range_start, range_size);
+}
+
 int main(void)
 {
     if (install_signal_handlers() == -1)
@@ -491,7 +496,22 @@ int main(void)
                 bool hit_float = write_hits_block(start_reg, reg_count, FLOAT_BASE, FLOAT_HOLDING_REG_COUNT);
                 bool prefer_float = hit_float;
 
+                long prev_repeats = params.repeats;
+                int prev_num_phases = params.num_phases;
+                bool wrote_repeats = prefer_float
+                                         ? write_hits_range(start_reg, reg_count, FLOAT_BASE + 2, 2)
+                                         : write_hits_range(start_reg, reg_count, 2, 2);
+                bool wrote_num_phases = prefer_float
+                                            ? write_hits_range(start_reg, reg_count, FLOAT_BASE + 4, 2)
+                                            : write_hits_range(start_reg, reg_count, 4, 2);
+
                 registers_to_params(mapping->tab_registers, &params, prefer_float);
+
+                if (!wrote_repeats)
+                    params.repeats = prev_repeats;
+                if (!wrote_num_phases)
+                    params.num_phases = prev_num_phases;
+
                 save_iter_params(PARAMS_FILE, &params);
                 params_to_registers(&params, mapping->tab_registers, mapping->nb_registers);
             }
