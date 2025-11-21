@@ -414,59 +414,68 @@ static void reload_params_if_updated(const char *path, IterParams *params, uint1
     }
 }
 
+static void registers_int_block_to_params(const uint16_t *regs, IterParams *p)
+{
+    long repeats = (long)regs_to_int32(&regs[2]);
+    if (repeats == 0 || repeats == -1) {
+        p->repeats = repeats;
+    } else {
+        p->repeats = repeats < 0 ? 1 : repeats;
+    }
+
+    long num_phases = (long)regs_to_int32(&regs[4]);
+    if (num_phases < 1)
+        num_phases = 1;
+    if (num_phases > MAX_PHASES)
+        num_phases = MAX_PHASES;
+    p->num_phases = (int)num_phases;
+
+    for (int i = 0; i < MAX_PHASES; ++i) {
+        int base = INT_HEADER_REGS + i * INT_PHASE_REGS_PER_PHASE;
+        p->phases[i].start_mV = (int)regs_to_int32(&regs[base + 0]);
+        p->phases[i].end_mV = (int)regs_to_int32(&regs[base + 2]);
+        p->phases[i].step_mV = (int)regs_to_int32(&regs[base + 4]);
+        p->phases[i].period_ms = (int)regs_to_int32(&regs[base + 6]);
+        p->phases[i].settle_ms = (int)regs_to_int32(&regs[base + 8]);
+        p->phases[i].pause_ms = (int)regs_to_int32(&regs[base + 10]);
+    }
+}
+
+static void registers_float_block_to_params(const uint16_t *regs, IterParams *p)
+{
+    float repeats = regs_to_float(&regs[FLOAT_BASE + 2]);
+    int rep_i = float_to_int_rounded(repeats);
+    if (rep_i == 0 || rep_i == -1) {
+        p->repeats = (long)rep_i;
+    } else {
+        p->repeats = rep_i < 0 ? 1 : (long)rep_i;
+    }
+
+    float num_phases = regs_to_float(&regs[FLOAT_BASE + 4]);
+    int np = float_to_int_rounded(num_phases);
+    if (np < 1)
+        np = 1;
+    if (np > MAX_PHASES)
+        np = MAX_PHASES;
+    p->num_phases = np;
+
+    for (int i = 0; i < MAX_PHASES; ++i) {
+        int base = FLOAT_BASE + FLOAT_HEADER_REGS + i * FLOAT_PHASE_REGS_PER_PHASE;
+        p->phases[i].start_mV = float_to_int_rounded(regs_to_float(&regs[base + 0]));
+        p->phases[i].end_mV = float_to_int_rounded(regs_to_float(&regs[base + 2]));
+        p->phases[i].step_mV = float_to_int_rounded(regs_to_float(&regs[base + 4]));
+        p->phases[i].period_ms = float_to_int_rounded(regs_to_float(&regs[base + 6]));
+        p->phases[i].settle_ms = float_to_int_rounded(regs_to_float(&regs[base + 8]));
+        p->phases[i].pause_ms = float_to_int_rounded(regs_to_float(&regs[base + 10]));
+    }
+}
+
 static void registers_to_params(const uint16_t *regs, IterParams *p, int use_float_block)
 {
-    if (use_float_block) {
-        float repeats = regs_to_float(&regs[FLOAT_BASE + 2]);
-        int rep_i = float_to_int_rounded(repeats);
-        if (rep_i == 0 || rep_i == -1) {
-            p->repeats = (long)rep_i;
-        } else {
-            p->repeats = rep_i < 0 ? 1 : (long)rep_i;
-        }
-
-        float num_phases = regs_to_float(&regs[FLOAT_BASE + 4]);
-        int np = float_to_int_rounded(num_phases);
-        if (np < 1)
-            np = 1;
-        if (np > MAX_PHASES)
-            np = MAX_PHASES;
-        p->num_phases = np;
-
-        for (int i = 0; i < MAX_PHASES; ++i) {
-            int base = FLOAT_BASE + FLOAT_HEADER_REGS + i * FLOAT_PHASE_REGS_PER_PHASE;
-            p->phases[i].start_mV = float_to_int_rounded(regs_to_float(&regs[base + 0]));
-            p->phases[i].end_mV = float_to_int_rounded(regs_to_float(&regs[base + 2]));
-            p->phases[i].step_mV = float_to_int_rounded(regs_to_float(&regs[base + 4]));
-            p->phases[i].period_ms = float_to_int_rounded(regs_to_float(&regs[base + 6]));
-            p->phases[i].settle_ms = float_to_int_rounded(regs_to_float(&regs[base + 8]));
-            p->phases[i].pause_ms = float_to_int_rounded(regs_to_float(&regs[base + 10]));
-        }
-    } else {
-        long repeats = (long)regs_to_int32(&regs[2]);
-        if (repeats == 0 || repeats == -1) {
-            p->repeats = repeats;
-        } else {
-            p->repeats = repeats < 0 ? 1 : repeats;
-        }
-
-        long num_phases = (long)regs_to_int32(&regs[4]);
-        if (num_phases < 1)
-            num_phases = 1;
-        if (num_phases > MAX_PHASES)
-            num_phases = MAX_PHASES;
-        p->num_phases = (int)num_phases;
-
-        for (int i = 0; i < MAX_PHASES; ++i) {
-            int base = INT_HEADER_REGS + i * INT_PHASE_REGS_PER_PHASE;
-            p->phases[i].start_mV = (int)regs_to_int32(&regs[base + 0]);
-            p->phases[i].end_mV = (int)regs_to_int32(&regs[base + 2]);
-            p->phases[i].step_mV = (int)regs_to_int32(&regs[base + 4]);
-            p->phases[i].period_ms = (int)regs_to_int32(&regs[base + 6]);
-            p->phases[i].settle_ms = (int)regs_to_int32(&regs[base + 8]);
-            p->phases[i].pause_ms = (int)regs_to_int32(&regs[base + 10]);
-        }
-    }
+    if (use_float_block)
+        registers_float_block_to_params(regs, p);
+    else
+        registers_int_block_to_params(regs, p);
 }
 
 static int is_write_function(int func)
@@ -550,24 +559,64 @@ int main(void)
                 if (func == MODBUS_FC_WRITE_MULTIPLE_REGISTERS)
                     reg_count = ((int)query[10] << 8) | (int)query[11];
 
+                bool hit_int = write_hits_block(start_reg, reg_count, 0, INT_HOLDING_REG_COUNT);
                 bool hit_float = write_hits_block(start_reg, reg_count, FLOAT_BASE, FLOAT_HOLDING_REG_COUNT);
-                bool prefer_float = hit_float;
 
-                long prev_repeats = params.repeats;
-                int prev_num_phases = params.num_phases;
-                bool wrote_repeats = prefer_float
-                                         ? write_hits_range(start_reg, reg_count, FLOAT_BASE + 2, 2)
-                                         : write_hits_range(start_reg, reg_count, 2, 2);
-                bool wrote_num_phases = prefer_float
-                                            ? write_hits_range(start_reg, reg_count, FLOAT_BASE + 4, 2)
-                                            : write_hits_range(start_reg, reg_count, 4, 2);
+                IterParams new_params = params;
+                IterParams int_view;
+                IterParams float_view;
 
-                registers_to_params(mapping->tab_registers, &params, prefer_float);
+                if (hit_int)
+                    registers_int_block_to_params(mapping->tab_registers, &int_view);
+                if (hit_float)
+                    registers_float_block_to_params(mapping->tab_registers, &float_view);
 
-                if (!wrote_repeats)
-                    params.repeats = prev_repeats;
-                if (!wrote_num_phases)
-                    params.num_phases = prev_num_phases;
+                if (hit_int && write_hits_range(start_reg, reg_count, 2, 2))
+                    new_params.repeats = int_view.repeats;
+                if (hit_float && write_hits_range(start_reg, reg_count, FLOAT_BASE + 2, 2))
+                    new_params.repeats = float_view.repeats;
+
+                if (hit_int && write_hits_range(start_reg, reg_count, 4, 2))
+                    new_params.num_phases = int_view.num_phases;
+                if (hit_float && write_hits_range(start_reg, reg_count, FLOAT_BASE + 4, 2))
+                    new_params.num_phases = float_view.num_phases;
+
+                for (int i = 0; i < MAX_PHASES; ++i) {
+                    int base_int = INT_HEADER_REGS + i * INT_PHASE_REGS_PER_PHASE;
+                    int base_float = FLOAT_BASE + FLOAT_HEADER_REGS + i * FLOAT_PHASE_REGS_PER_PHASE;
+
+                    if (hit_int && write_hits_range(start_reg, reg_count, base_int + 0, 2))
+                        new_params.phases[i].start_mV = int_view.phases[i].start_mV;
+                    if (hit_float && write_hits_range(start_reg, reg_count, base_float + 0, 2))
+                        new_params.phases[i].start_mV = float_view.phases[i].start_mV;
+
+                    if (hit_int && write_hits_range(start_reg, reg_count, base_int + 2, 2))
+                        new_params.phases[i].end_mV = int_view.phases[i].end_mV;
+                    if (hit_float && write_hits_range(start_reg, reg_count, base_float + 2, 2))
+                        new_params.phases[i].end_mV = float_view.phases[i].end_mV;
+
+                    if (hit_int && write_hits_range(start_reg, reg_count, base_int + 4, 2))
+                        new_params.phases[i].step_mV = int_view.phases[i].step_mV;
+                    if (hit_float && write_hits_range(start_reg, reg_count, base_float + 4, 2))
+                        new_params.phases[i].step_mV = float_view.phases[i].step_mV;
+
+                    if (hit_int && write_hits_range(start_reg, reg_count, base_int + 6, 2))
+                        new_params.phases[i].period_ms = int_view.phases[i].period_ms;
+                    if (hit_float && write_hits_range(start_reg, reg_count, base_float + 6, 2))
+                        new_params.phases[i].period_ms = float_view.phases[i].period_ms;
+
+                    if (hit_int && write_hits_range(start_reg, reg_count, base_int + 8, 2))
+                        new_params.phases[i].settle_ms = int_view.phases[i].settle_ms;
+                    if (hit_float && write_hits_range(start_reg, reg_count, base_float + 8, 2))
+                        new_params.phases[i].settle_ms = float_view.phases[i].settle_ms;
+
+                    if (hit_int && write_hits_range(start_reg, reg_count, base_int + 10, 2))
+                        new_params.phases[i].pause_ms = int_view.phases[i].pause_ms;
+                    if (hit_float && write_hits_range(start_reg, reg_count, base_float + 10, 2))
+                        new_params.phases[i].pause_ms = float_view.phases[i].pause_ms;
+                }
+
+                params = new_params;
 
                 save_iter_params(PARAMS_FILE, &params);
                 read_file_mtime(PARAMS_FILE, &params_mtime);
