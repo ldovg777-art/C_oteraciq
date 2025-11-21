@@ -611,8 +611,25 @@ int main(void)
                     registers_int_block_to_params(mapping->tab_registers, &int_view);
                 if (hit_float)
                     registers_float_block_to_params(mapping->tab_registers, &float_view);
-                if (hit_control_float && reg_count >= CONTROL_REG_COUNT) {
-                    float cmd = regs_to_float(&mapping->tab_registers[CONTROL_REG_ADDR]);
+                if (hit_control_float) {
+                    uint16_t *control_regs = &mapping->tab_registers[CONTROL_REG_ADDR];
+                    bool wrote_hi = write_hits_range(start_reg, reg_count, CONTROL_REG_ADDR, 1);
+                    bool wrote_lo = write_hits_range(start_reg, reg_count, CONTROL_REG_ADDR + 1, 1);
+
+                    if (wrote_hi && !wrote_lo)
+                        control_regs[1] = 0;
+
+                    float cmd = 0.0f;
+                    if (wrote_hi && !wrote_lo) {
+                        cmd = control_bits_to_float(control_regs[0]);
+                        if (cmd == 0.0f) {
+                            uint16_t tmp[CONTROL_REG_COUNT] = {control_regs[0], 0};
+                            cmd = regs_to_float(tmp);
+                        }
+                    } else {
+                        cmd = regs_to_float(control_regs);
+                    }
+
                     uint16_t control_bits = 0;
                     if (fabsf(cmd - 1.0f) < 0.001f)
                         control_bits = CMD_START;
