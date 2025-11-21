@@ -200,6 +200,14 @@ static int load_iter_params(const char *path, IterParams *p)
 
     char line[256];
     while (fgets(line, sizeof(line), fp)) {
+        /* Проверка на переполнение буфера */
+        if (strlen(line) == sizeof(line) - 1 && line[sizeof(line) - 2] != '\n') {
+            fprintf(stderr, "Предупреждение: строка в файле параметров слишком длинная, пропускаем\n");
+            /* Пропускаем остаток строки */
+            int c;
+            while ((c = fgetc(fp)) != EOF && c != '\n');
+            continue;
+        }
         strtrim(line);
         if (line[0] == '\0' || line[0] == '#')
             continue;
@@ -259,14 +267,33 @@ static int load_iter_params(const char *path, IterParams *p)
 
 static int validate_iter_params(IterParams *p)
 {
-    if (p->repeats < 0)
+    if (p->repeats < 0 && p->repeats != -1)
         p->repeats = 1;
+
+    if (p->num_phases < 1)
+        p->num_phases = 1;
+    if (p->num_phases > MAX_PHASES)
+        p->num_phases = MAX_PHASES;
 
     for (int i = 0; i < p->num_phases; ++i) {
         IterPhase *phase = &p->phases[i];
+        
+        /* Проверка и нормализация step_mV */
         if (phase->step_mV == 0) {
-            fprintf(stderr, "Ошибка (фаза %d): step_mV=0\n", i + 1);
-            return -1;
+            fprintf(stderr, "Ошибка (фаза %d): step_mV=0, устанавливаем 100\n", i + 1);
+            phase->step_mV = 100;
+        }
+        
+        /* Проверка разумности значений напряжений */
+        if (phase->start_mV < -10000 || phase->start_mV > 10000) {
+            fprintf(stderr, "Предупреждение (фаза %d): start_mV=%d вне разумного диапазона, ограничиваем\n", i + 1, phase->start_mV);
+            if (phase->start_mV < -10000) phase->start_mV = -10000;
+            if (phase->start_mV > 10000) phase->start_mV = 10000;
+        }
+        if (phase->end_mV < -10000 || phase->end_mV > 10000) {
+            fprintf(stderr, "Предупреждение (фаза %d): end_mV=%d вне разумного диапазона, ограничиваем\n", i + 1, phase->end_mV);
+            if (phase->end_mV < -10000) phase->end_mV = -10000;
+            if (phase->end_mV > 10000) phase->end_mV = 10000;
         }
 
         int span = phase->end_mV - phase->start_mV;
@@ -278,14 +305,19 @@ static int validate_iter_params(IterParams *p)
             if ((span > 0 && phase->step_mV < 0) ||
                 (span < 0 && phase->step_mV > 0)) {
                 fprintf(stderr,
-                        "Ошибка (фаза %d): знак step_mV не согласован с направлением\n",
+                        "Ошибка (фаза %d): знак step_mV не согласован с направлением, исправляем\n",
                         i + 1);
-                return -1;
+                phase->step_mV = (phase->step_mV > 0) ? -phase->step_mV : -phase->step_mV;
             }
         }
 
+        /* Нормализация таймингов */
         if (phase->period_ms < 1)
             phase->period_ms = 1;
+        if (phase->period_ms > 10000) {
+            fprintf(stderr, "Предупреждение (фаза %d): period_ms=%d слишком большой, ограничиваем до 10000\n", i + 1, phase->period_ms);
+            phase->period_ms = 10000;
+        }
         if (phase->settle_ms < 1)
             phase->settle_ms = phase->period_ms / 2;
         if (phase->settle_ms >= phase->period_ms)
@@ -294,6 +326,10 @@ static int validate_iter_params(IterParams *p)
             phase->settle_ms = 0;
         if (phase->pause_ms < 0)
             phase->pause_ms = 0;
+        if (phase->pause_ms > 60000) {
+            fprintf(stderr, "Предупреждение (фаза %d): pause_ms=%d слишком большой, ограничиваем до 60000\n", i + 1, phase->pause_ms);
+            phase->pause_ms = 60000;
+        }
     }
 
     return 0;
@@ -325,6 +361,28 @@ static float regs_to_float(const uint16_t *regs)
     return conv.f;
 }
 
+/* Функция переподключения Modbus */
+static int modbus_reconnect_with_retry(modbus_t *ctx, const char *ip, int port, int slave, int max_retries)
+{
+    if (!ctx)
+        return -1;
+    
+    modbus_close(ctx);
+    
+    for (int i = 0; i < max_retries; i++) {
+        if (modbus_connect(ctx) == 0) {
+            return 0;
+        }
+        if (i < max_retries - 1) {
+            struct timespec delay = {0, 500000000L}; // 500ms
+            nanosleep(&delay, NULL);
+        }
+    }
+    
+    fprintf(stderr, "Не удалось переподключиться к %s:%d после %d попыток\n", ip, port, max_retries);
+    return -1;
+}
+
 static void poll_control_commands(modbus_t *ctx, ControlState *state, int *restart_requested)
 {
     if (!ctx || !state)
@@ -332,8 +390,17 @@ static void poll_control_commands(modbus_t *ctx, ControlState *state, int *resta
 
     uint16_t regs[CONTROL_REG_COUNT] = {0};
     int rc = modbus_read_registers(ctx, CONTROL_REG_ADDR, CONTROL_REG_COUNT, regs);
-    if (rc == -1)
-        return;
+    if (rc == -1) {
+        /* Попытка переподключения при ошибке */
+        if (modbus_reconnect_with_retry(ctx, MODBUS_CTRL_IP, MODBUS_CTRL_PORT, MODBUS_CTRL_SLAVE, 3) == 0) {
+            /* Повторная попытка чтения после переподключения */
+            rc = modbus_read_registers(ctx, CONTROL_REG_ADDR, CONTROL_REG_COUNT, regs);
+            if (rc == -1)
+                return;
+        } else {
+            return;
+        }
+    }
 
     float cmd = regs_to_float(regs);
     uint16_t mask = 0;
@@ -381,12 +448,17 @@ static void poll_control_commands(modbus_t *ctx, ControlState *state, int *resta
 int main(void)
 {
     IterParams par;
+    /* Инициализация значениями по умолчанию на случай ошибки загрузки */
+    init_iter_params(&par);
+    
     if (load_iter_params(ITER_PARAMS_FILE, &par) != 0) {
-        return -1;
+        fprintf(stderr, "Предупреждение: не удалось загрузить параметры из файла, используются значения по умолчанию\n");
+        /* Продолжаем с значениями по умолчанию */
     }
 
     if (validate_iter_params(&par) != 0) {
-        return -1;
+        fprintf(stderr, "Ошибка валидации параметров, исправляем автоматически\n");
+        /* validate_iter_params теперь исправляет параметры автоматически */
     }
 
     printf("Параметры (фаз: %d):\n", par.num_phases);
@@ -423,8 +495,18 @@ int main(void)
     FILE *f = fopen(fname, "w");
     if (!f) {
         perror("Ошибка открытия CSV");
+        AdamIO_Close(fd_io);
+        modbus_close(ctx);
+        modbus_free(ctx);
+        if (ctrl_ctx) {
+            modbus_close(ctrl_ctx);
+            modbus_free(ctrl_ctx);
+        }
         return -1;
     }
+    
+    /* Установка буферизации для CSV файла (строка за строкой для надежности) */
+    setvbuf(f, NULL, _IOLBF, 0);
 
     fprintf(f,
         "cycle;phase;idx;time_ms;iter_mV;iter_V;code_set;ao_V;"
@@ -460,6 +542,12 @@ int main(void)
         return -1;
     }
 
+    /* Установка таймаутов для надежности */
+    struct timeval response_timeout;
+    response_timeout.tv_sec = 2;
+    response_timeout.tv_usec = 0;
+    modbus_set_response_timeout(ctx, &response_timeout);
+    
     if (modbus_connect(ctx) == -1) {
         fprintf(stderr, "Ошибка modbus_connect: %s\n", modbus_strerror(errno));
         modbus_free(ctx);
@@ -473,6 +561,12 @@ int main(void)
         fprintf(stderr, "Предупреждение: не удалось создать Modbus-контекст управления\n");
     } else {
         modbus_set_slave(ctrl_ctx, MODBUS_CTRL_SLAVE);
+        /* Установка таймаутов для управления */
+        struct timeval ctrl_timeout;
+        ctrl_timeout.tv_sec = 1;
+        ctrl_timeout.tv_usec = 0;
+        modbus_set_response_timeout(ctrl_ctx, &ctrl_timeout);
+        
         if (modbus_connect(ctrl_ctx) == -1) {
             fprintf(stderr, "Предупреждение: не удалось подключиться к локальному Modbus-серверу (%s)\n",
                     modbus_strerror(errno));
@@ -498,12 +592,16 @@ int main(void)
 
         if (restart_requested) {
             IterParams new_par;
-            if (load_iter_params(ITER_PARAMS_FILE, &new_par) == 0 &&
-                validate_iter_params(&new_par) == 0) {
-                par = new_par;
-                printf("Параметры итерации обновлены по команде RESTART\n");
+            init_iter_params(&new_par); /* Инициализация на случай ошибки */
+            if (load_iter_params(ITER_PARAMS_FILE, &new_par) == 0) {
+                if (validate_iter_params(&new_par) == 0) {
+                    par = new_par;
+                    printf("Параметры итерации обновлены по команде RESTART\n");
+                } else {
+                    fprintf(stderr, "RESTART: параметры некорректны после валидации, оставляем текущие\n");
+                }
             } else {
-                fprintf(stderr, "RESTART: параметры некорректны, оставляем текущие\n");
+                fprintf(stderr, "RESTART: не удалось загрузить параметры из файла, оставляем текущие\n");
             }
             restart_requested = 0;
         }
@@ -592,10 +690,22 @@ int main(void)
                     uint16_t code_set = voltage_to_code(iter_V);
                     ret = modbus_write_register(ctx, AO0_REG_ADDR, code_set);
                     if (ret == -1) {
-                        fprintf(stderr, "Ошибка modbus_write_register: %s\n",
+                        fprintf(stderr, "Ошибка modbus_write_register: %s, попытка переподключения...\n",
                                 modbus_strerror(errno));
-                        abort_loops = 1;
-                        break;
+                        /* Попытка переподключения */
+                        if (modbus_reconnect_with_retry(ctx, ADAM6224_IP, ADAM6224_PORT, ADAM6224_SLAVE, 3) == 0) {
+                            /* Повторная попытка записи после переподключения */
+                            ret = modbus_write_register(ctx, AO0_REG_ADDR, code_set);
+                            if (ret == -1) {
+                                fprintf(stderr, "Критическая ошибка: не удалось записать после переподключения\n");
+                                abort_loops = 1;
+                                break;
+                            }
+                        } else {
+                            fprintf(stderr, "Критическая ошибка: не удалось переподключиться к ADAM-6224\n");
+                            abort_loops = 1;
+                            break;
+                        }
                     }
 
                     /* Ожидание settle */
@@ -615,7 +725,14 @@ int main(void)
                         unsigned char st = 0;
                         int ai_ret = AI_GetFloatValue(fd_io, ch, &ai[ch], &st);
                         if (ai_ret != 0) {
-                            ai[ch] = prev_ai[ch]; // использовать предыдущее
+                            /* Использовать предыдущее значение при ошибке */
+                            ai[ch] = prev_ai[ch];
+                            /* Логировать только первые несколько ошибок, чтобы не засорять вывод */
+                            static int error_count = 0;
+                            if (error_count < 3) {
+                                fprintf(stderr, "Предупреждение: ошибка чтения AI канала %d (код %d), используется предыдущее значение\n", ch, ai_ret);
+                                error_count++;
+                            }
                         } else {
                             prev_ai[ch] = ai[ch];
                         }
@@ -624,8 +741,8 @@ int main(void)
                     /* AO: расчётное значение */
                     double ao_V = code_to_voltage(code_set);
 
-                    /* Запись CSV */
-                    fprintf(f,
+                    /* Запись CSV с проверкой ошибок */
+                    if (fprintf(f,
                         "%ld;%d;%d;%.3f;%d;%.6f;%u;%.6f;"
                         "%.6f;%.6f;%.6f;%.6f;%.6f;%.6f;%.6f;%.6f\n",
                         cycle_num,
@@ -635,7 +752,12 @@ int main(void)
                         ao_V,
                         (double)ai[0], (double)ai[1], (double)ai[2], (double)ai[3],
                         (double)ai[4], (double)ai[5], (double)ai[6], (double)ai[7]
-                    );
+                    ) < 0) {
+                        fprintf(stderr, "Ошибка записи в CSV файл: %s\n", strerror(errno));
+                        /* Продолжаем работу, но логируем ошибку */
+                    } else {
+                        fflush(f); /* Принудительная запись для сохранения данных */
+                    }
 
                     /* Сохранить последнее измерение шага для пост-фазового замера */
                     last_iter_mV = iter_mV;
@@ -690,7 +812,7 @@ int main(void)
 
                         int mid_idx = (last_idx >= 0) ? last_idx : 0;
 
-                        fprintf(f,
+                        if (fprintf(f,
                             "%ld;%d;%d;%.3f;%d;%.6f;%u;%.6f;"
                             "%.6f;%.6f;%.6f;%.6f;%.6f;%.6f;%.6f;%.6f\n",
                             cycle_num,
@@ -700,7 +822,11 @@ int main(void)
                             last_ao_V,
                             (double)ai_mid[0], (double)ai_mid[1], (double)ai_mid[2], (double)ai_mid[3],
                             (double)ai_mid[4], (double)ai_mid[5], (double)ai_mid[6], (double)ai_mid[7]
-                        );
+                        ) < 0) {
+                            fprintf(stderr, "Ошибка записи в CSV файл (post-step): %s\n", strerror(errno));
+                        } else {
+                            fflush(f);
+                        }
 
                         printf(
                             "cycle=%ld phase=%d idx=%d (post-step pause) t=%.3f ms iter=%d mV (%.3f В) AO_code=%u AO_V=%.3f "
@@ -724,6 +850,7 @@ int main(void)
 
             /* Перечитать файл уставок после завершения цикла */
             IterParams new_par;
+            init_iter_params(&new_par); /* Инициализация на случай ошибки */
             if (load_iter_params(ITER_PARAMS_FILE, &new_par) == 0) {
                 if (validate_iter_params(&new_par) == 0) {
                     par = new_par;
@@ -731,7 +858,7 @@ int main(void)
                            cycle_num);
                 } else {
                     fprintf(stderr,
-                            "Новые параметры из файла некорректны, оставляем предыдущие\n");
+                            "Новые параметры из файла некорректны после валидации, оставляем предыдущие\n");
                 }
             } else {
                 fprintf(stderr,

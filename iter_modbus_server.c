@@ -25,6 +25,7 @@
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
+#include <fcntl.h>
 
 #define PARAMS_FILE "/home/root/iter_params.txt"
 #define MODBUS_PORT 1502
@@ -135,10 +136,21 @@ static int parse_int(const char *s, int *out) {
 static int load_iter_params(const char *path, IterParams *p, int *parsed_values) {
     FILE *fp = fopen(path, "r");
     init_iter_params(p);
-    if (!fp) { return -1; }
+    if (!fp) { 
+        fprintf(stderr, "Не удалось открыть файл параметров %s: %s\n", path, strerror(errno));
+        return -1; 
+    }
     int parsed = 0;
     char line[256];
     while (fgets(line, sizeof(line), fp)) {
+        /* Проверка на переполнение буфера */
+        if (strlen(line) == sizeof(line) - 1 && line[sizeof(line) - 2] != '\n') {
+            fprintf(stderr, "Предупреждение: строка в файле параметров слишком длинная, пропускаем\n");
+            /* Пропускаем остаток строки */
+            int c;
+            while ((c = fgetc(fp)) != EOF && c != '\n');
+            continue;
+        }
         strtrim(line);
         if (line[0] == '\0' || line[0] == '#') continue;
         char *eq = strchr(line, '=');
@@ -291,12 +303,24 @@ int main(void) {
     
     params_to_registers(&params, mapping->tab_registers, mapping->nb_registers);
 
+    /* Установка таймаутов для сервера */
+    struct timeval response_timeout;
+    response_timeout.tv_sec = 1;
+    response_timeout.tv_usec = 0;
+    modbus_set_response_timeout(ctx, &response_timeout);
+    
     int server_socket = modbus_tcp_listen(ctx, MAX_CLIENTS);
     if (server_socket < 0) {
         fprintf(stderr, "Error listening on port %d: %s\n", MODBUS_PORT, modbus_strerror(errno));
         modbus_mapping_free(mapping);
         modbus_free(ctx);
         return 1;
+    }
+    
+    /* Установка неблокирующего режима для accept (опционально, но улучшает надежность) */
+    int flags = fcntl(server_socket, F_GETFL, 0);
+    if (flags >= 0) {
+        fcntl(server_socket, F_SETFL, flags | O_NONBLOCK);
     }
 
     int client_sockets[MAX_CLIENTS];
@@ -312,10 +336,19 @@ int main(void) {
         if (read_file_mtime(PARAMS_FILE, &current_mtime) == 0) {
             if (current_mtime != params_mtime) {
                 int parsed = 0;
-                if (load_iter_params(PARAMS_FILE, &params, &parsed) == 0 && parsed > 0) {
-                    params_mtime = current_mtime;
-                    params_to_registers(&params, mapping->tab_registers, mapping->nb_registers);
-                    printf("Параметры обновлены из файла.\n");
+                IterParams new_params = params; /* Сохраняем текущие параметры */
+                if (load_iter_params(PARAMS_FILE, &new_params, &parsed) == 0 && parsed > 0) {
+                    /* Валидация новых параметров перед применением */
+                    if (new_params.num_phases >= 1 && new_params.num_phases <= MAX_PHASES) {
+                        params = new_params;
+                        params_mtime = current_mtime;
+                        params_to_registers(&params, mapping->tab_registers, mapping->nb_registers);
+                        printf("Параметры обновлены из файла.\n");
+                    } else {
+                        fprintf(stderr, "Предупреждение: некорректное количество фаз в файле, оставляем текущие параметры\n");
+                    }
+                } else {
+                    fprintf(stderr, "Предупреждение: не удалось загрузить параметры из файла, оставляем текущие\n");
                 }
             }
         }
@@ -342,25 +375,41 @@ int main(void) {
         if (FD_ISSET(server_socket, &readfds)) {
             int new_socket;
             if ((new_socket = accept(server_socket, NULL, NULL)) < 0) {
-                perror("accept");
+                if (errno != EAGAIN && errno != EWOULDBLOCK) {
+                    perror("accept");
+                }
             } else {
+                int added = 0;
                 for (int i = 0; i < MAX_CLIENTS; i++) {
                     if (client_sockets[i] == 0) {
                         client_sockets[i] = new_socket;
+                        added = 1;
                         break;
                     }
+                }
+                if (!added) {
+                    /* Достигнут лимит клиентов - закрываем новое соединение */
+                    fprintf(stderr, "Достигнут лимит клиентов (%d), закрываем новое соединение\n", MAX_CLIENTS);
+                    close(new_socket);
                 }
             }
         }
 
         for (int i = 0; i < MAX_CLIENTS; i++) {
             int sd = client_sockets[i];
-            if (FD_ISSET(sd, &readfds)) {
+            if (sd > 0 && FD_ISSET(sd, &readfds)) {
                 modbus_set_socket(ctx, sd);
                 int rc = modbus_receive(ctx, query);
                 
                 if (rc > 0) {
-                    modbus_reply(ctx, query, rc, mapping);
+                    int reply_rc = modbus_reply(ctx, query, rc, mapping);
+                    if (reply_rc == -1) {
+                        /* Ошибка при отправке ответа - разрыв соединения */
+                        fprintf(stderr, "Ошибка modbus_reply для клиента %d: %s\n", sd, modbus_strerror(errno));
+                        close(sd);
+                        client_sockets[i] = 0;
+                        continue;
+                    }
 
                     int func = query[7];
                     if (func == MODBUS_FC_WRITE_SINGLE_REGISTER || func == MODBUS_FC_WRITE_MULTIPLE_REGISTERS) {
@@ -408,12 +457,29 @@ int main(void) {
                             if (hit_float) new_p = float_v;
 
                             params = new_p;
-                            save_iter_params(PARAMS_FILE, &params);
+                            if (save_iter_params(PARAMS_FILE, &params) != 0) {
+                                fprintf(stderr, "Ошибка сохранения параметров в файл: %s\n", strerror(errno));
+                                /* Продолжаем работу с обновленными параметрами в памяти */
+                            }
                             read_file_mtime(PARAMS_FILE, &params_mtime);
                             params_to_registers(&params, mapping->tab_registers, mapping->nb_registers);
                         }
                     }
+                } else if (rc == -1) {
+                    /* Ошибка приема - проверяем тип ошибки */
+                    if (errno == ECONNRESET || errno == EPIPE || errno == ETIMEDOUT) {
+                        /* Нормальный разрыв соединения */
+                        close(sd);
+                        client_sockets[i] = 0;
+                    } else if (errno != EAGAIN && errno != EWOULDBLOCK) {
+                        /* Другие ошибки - закрываем соединение */
+                        fprintf(stderr, "Ошибка modbus_receive для клиента %d: %s\n", sd, modbus_strerror(errno));
+                        close(sd);
+                        client_sockets[i] = 0;
+                    }
+                    /* EAGAIN/EWOULDBLOCK - просто продолжаем */
                 } else {
+                    /* rc == 0 или другая ситуация - закрываем соединение */
                     close(sd);
                     client_sockets[i] = 0;
                 }
