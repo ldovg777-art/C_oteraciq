@@ -495,13 +495,6 @@ int main(void)
     FILE *f = fopen(fname, "w");
     if (!f) {
         perror("Ошибка открытия CSV");
-        AdamIO_Close(fd_io);
-        modbus_close(ctx);
-        modbus_free(ctx);
-        if (ctrl_ctx) {
-            modbus_close(ctrl_ctx);
-            modbus_free(ctrl_ctx);
-        }
         return -1;
     }
     
@@ -543,10 +536,7 @@ int main(void)
     }
 
     /* Установка таймаутов для надежности */
-    struct timeval response_timeout;
-    response_timeout.tv_sec = 2;
-    response_timeout.tv_usec = 0;
-    modbus_set_response_timeout(ctx, &response_timeout);
+    modbus_set_response_timeout(ctx, 2, 0);
     
     if (modbus_connect(ctx) == -1) {
         fprintf(stderr, "Ошибка modbus_connect: %s\n", modbus_strerror(errno));
@@ -562,10 +552,7 @@ int main(void)
     } else {
         modbus_set_slave(ctrl_ctx, MODBUS_CTRL_SLAVE);
         /* Установка таймаутов для управления */
-        struct timeval ctrl_timeout;
-        ctrl_timeout.tv_sec = 1;
-        ctrl_timeout.tv_usec = 0;
-        modbus_set_response_timeout(ctrl_ctx, &ctrl_timeout);
+        modbus_set_response_timeout(ctrl_ctx, 1, 0);
         
         if (modbus_connect(ctrl_ctx) == -1) {
             fprintf(stderr, "Предупреждение: не удалось подключиться к локальному Modbus-серверу (%s)\n",
