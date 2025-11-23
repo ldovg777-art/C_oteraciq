@@ -214,7 +214,9 @@ static int load_iter_params(const char *path, IterParams *p, int *parsed_values)
 }
 
 static int save_iter_params(const char *path, const IterParams *p) {
-    FILE *fp = fopen(path, "w"); if (!fp) return -1;
+    char tmp_path[512];
+    snprintf(tmp_path, sizeof(tmp_path), "%s.tmp", path);
+    FILE *fp = fopen(tmp_path, "w"); if (!fp) return -1;
     fprintf(fp, "# Iteration Params\nrepeats=%ld\nphases=%d\n\n", p->repeats, p->num_phases);
     for (int i = 0; i < p->num_phases; ++i) {
         const char *prefix = (i == 0) ? "" : (char[]){'s','t','e','p',(char)('1' + i), '_', '\0'};
@@ -235,7 +237,12 @@ static int save_iter_params(const char *path, const IterParams *p) {
     fprintf(fp, "calc_filter_redox1=%.0f\n", p->calc_filter_redox1);
     fprintf(fp, "calc_filter_redox2=%.0f\n", p->calc_filter_redox2);
     
-    fclose(fp); return 0;
+    fclose(fp);
+    if (rename(tmp_path, path) != 0) {
+        remove(tmp_path);
+        return -1;
+    }
+    return 0;
 }
 
 /* Utils */
