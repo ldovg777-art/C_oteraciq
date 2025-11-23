@@ -152,8 +152,15 @@ static int parse_phase_key(const char *key, int *phase_idx, const char **suffix)
     *phase_idx = 0; *suffix = key; return 0;
 }
 static int parse_int(const char *s, int *out) {
-    if (!s || !out) return -1; char *endptr = NULL;
-    long v = strtol(s, &endptr, 10); if (endptr == s) return -1; *out = (int)v; return 0;
+    if (!s || !out) return -1;
+
+    char *endptr = NULL;
+    long v = strtol(s, &endptr, 10);
+
+    if (endptr == s) return -1;
+
+    *out = (int)v;
+    return 0;
 }
 
 static int load_iter_params(const char *path, IterParams *p, int *parsed_values) {
@@ -202,6 +209,7 @@ static int load_iter_params(const char *path, IterParams *p, int *parsed_values)
         else if (strcmp(key, "repeats") == 0) { long rep = strtol(val, NULL, 10); p->repeats = (rep == 0 || rep == -1) ? rep : (rep < 0 ? 1 : rep); parsed++; }
         else if (strcmp(key, "phases") == 0) { int np = 0; if (parse_int(val, &np) == 0 && np >= 1 && np <= MAX_PHASES) p->num_phases = np; parsed++; }
     }
+    if (parsed_values) *parsed_values = parsed;
     fclose(fp); return 0;
 }
 
