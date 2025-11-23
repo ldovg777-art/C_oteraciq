@@ -152,8 +152,15 @@ static int parse_phase_key(const char *key, int *phase_idx, const char **suffix)
     *phase_idx = 0; *suffix = key; return 0;
 }
 static int parse_int(const char *s, int *out) {
-    if (!s || !out) return -1; char *endptr = NULL;
-    long v = strtol(s, &endptr, 10); if (endptr == s) return -1; *out = (int)v; return 0;
+    if (!s || !out) return -1;
+
+    char *endptr = NULL;
+    long v = strtol(s, &endptr, 10);
+
+    if (endptr == s) return -1;
+
+    *out = (int)v;
+    return 0;
 }
 
 static int load_iter_params(const char *path, IterParams *p, int *parsed_values) {
