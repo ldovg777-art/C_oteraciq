@@ -529,4 +529,4 @@ gcc -Wall iter_http_server.c -o iter_http_server
    C:\ADAM_BUILD>build_iter_modbus_server.cmd
    ```
 
-Скрипт запускает `docker run debian:11`, ставит `gcc-arm-linux-gnueabihf` и `libmodbus-dev:armhf`, затем собирает `iter_modbus_server_arm` со связыванием `-lmodbus -lm`. Готовый бинарник появится в той же директории `C:\ADAM_BUILD` и его можно переносить на ADAM-6717.
+Скрипт запускает `docker run debian:11`, ставит `gcc-arm-linux-gnueabihf` и `libmodbus-dev:armhf`, затем собирает `iter_modbus_server_arm` со статическим связыванием (`-static`, `-lmodbus`, `-lm`). Готовый бинарник появится в той же директории `C:\ADAM_BUILD` и его можно переносить на ADAM-6717. Полностью статическая сборка убирает зависимость от версии glibc на устройстве и устраняет ошибку вида `GLIBC_2.28 not found` при запуске на старых прошивках.
