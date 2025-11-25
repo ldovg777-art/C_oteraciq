@@ -1,0 +1,92 @@
+# Iteration Params
+repeats=0
+phases=5
+
+start_mV=-1000
+end_mV=1000
+step_mV=1000
+period_ms=400
+settle_ms=200
+pause_ms=401
+
+step2_start_mV=-2000
+step2_end_mV=2000
+step2_step_mV=2000
+step2_period_ms=400
+step2_settle_ms=200
+step2_pause_ms=500
+
+step3_start_mV=-3000
+step3_end_mV=3000
+step3_step_mV=3000
+step3_period_ms=400
+step3_settle_ms=200
+step3_pause_ms=500
+
+step4_start_mV=-4000
+step4_end_mV=4000
+step4_step_mV=4000
+step4_period_ms=400
+step4_settle_ms=200
+step4_pause_ms=500
+
+step5_start_mV=-5000
+step5_end_mV=5000
+step5_step_mV=5000
+step5_period_ms=400
+step5_settle_ms=300
+step5_pause_ms=555
+
+# Channel Scaling (200+)
+ch1_k=0.1000
+ch1_b=0.0000
+ch2_k=0.0000
+ch2_b=-50.0000
+ch3_k=0.0000
+ch3_b=10.0000
+ch4_k=0.0000
+ch4_b=100.0000
+ch5_k=1.0000
+ch5_b=0.0000
+ch6_k=1.0000
+ch6_b=0.0000
+ch7_k=1.0000
+ch7_b=0.0000
+ch8_k=1.0000
+ch8_b=0.0000
+
+# Chemistry Params (400+)
+calc_k_sum=1.0000
+calc_b_sum=0.0000
+calc_filter_size=10
+calc_deadband_acid=0.1000
+calc_deadband_alkali=0.1000
+calc_ph_neutral=7.0000
+calc_k_acid=-1.0000
+calc_b_acid=0.0000
+calc_k_alkali=1.0000
+calc_b_alkali=0.0000
+calc_filter_redox1=20
+calc_filter_redox2=5
+
+# Modbus TCP Settings (ADAM-6224 connection)
+# rs485_ip - IP адрес модуля ADAM-6224 (аналоговый выход)
+# rs485_port - TCP порт Modbus (стандартный 502)
+# rs485_slave - Slave ID устройства ADAM-6224
+rs485_ip=192.168.2.2
+rs485_port=502
+rs485_slave=1
+
+# Modbus RTU Settings (RS485 - панель оператора)
+# rtu_port - последовательный порт (обычно /dev/ttyAP0)
+# rtu_baud - скорость передачи (300, 600, 1200, 2400, 4800, 9600, 19200, 38400, 57600, 115200)
+# rtu_parity - чётность: N (None), E (Even), O (Odd)
+# rtu_data_bit - биты данных (5, 6, 7, 8)
+# rtu_stop_bit - стоп-биты (1, 2)
+# rtu_slave_id - Slave ID этого модуля (1-247)
+rtu_port=/dev/ttyAP0
+rtu_baud=9600
+rtu_parity=N
+rtu_data_bit=8
+rtu_stop_bit=1
+rtu_slave_id=1
