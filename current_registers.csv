@@ -1,0 +1,183 @@
+Адрес (DEC);Адрес (HEX);Тип данных;Имя переменной;Описание
+0;0x0000;INT32;version;Версия структуры (всегда 1)
+2;0x0002;INT32;repeats;Количество повторов (0 = бесконечно)
+4;0x0004;INT32;num_phases;Количество фаз (1-5)
+6;0x0006;INT32;ph1_start_mV;Фаза 1: Начальное напряжение (мВ)
+8;0x0008;INT32;ph1_end_mV;Фаза 1: Конечное напряжение (мВ)
+10;0x000A;INT32;ph1_step_mV;Фаза 1: Шаг напряжения (мВ)
+12;0x000C;INT32;ph1_period_ms;Фаза 1: Период шага (мс)
+14;0x000E;INT32;ph1_settle_ms;Фаза 1: Время стабилизации (мс)
+16;0x0010;INT32;ph1_pause_ms;Фаза 1: Пауза после фазы (мс)
+18;0x0012;INT32;ph2_start_mV;Фаза 2: Начальное напряжение (мВ)
+20;0x0014;INT32;ph2_end_mV;Фаза 2: Конечное напряжение (мВ)
+22;0x0016;INT32;ph2_step_mV;Фаза 2: Шаг напряжения (мВ)
+24;0x0018;INT32;ph2_period_ms;Фаза 2: Период шага (мс)
+26;0x001A;INT32;ph2_settle_ms;Фаза 2: Время стабилизации (мс)
+28;0x001C;INT32;ph2_pause_ms;Фаза 2: Пауза после фазы (мс)
+30;0x001E;INT32;ph3_start_mV;Фаза 3: Начальное напряжение (мВ)
+32;0x0020;INT32;ph3_end_mV;Фаза 3: Конечное напряжение (мВ)
+34;0x0022;INT32;ph3_step_mV;Фаза 3: Шаг напряжения (мВ)
+36;0x0024;INT32;ph3_period_ms;Фаза 3: Период шага (мс)
+38;0x0026;INT32;ph3_settle_ms;Фаза 3: Время стабилизации (мс)
+40;0x0028;INT32;ph3_pause_ms;Фаза 3: Пауза после фазы (мс)
+42;0x002A;INT32;ph4_start_mV;Фаза 4: Начальное напряжение (мВ)
+44;0x002C;INT32;ph4_end_mV;Фаза 4: Конечное напряжение (мВ)
+46;0x002E;INT32;ph4_step_mV;Фаза 4: Шаг напряжения (мВ)
+48;0x0030;INT32;ph4_period_ms;Фаза 4: Период шага (мс)
+50;0x0032;INT32;ph4_settle_ms;Фаза 4: Время стабилизации (мс)
+52;0x0034;INT32;ph4_pause_ms;Фаза 4: Пауза после фазы (мс)
+54;0x0036;INT32;ph5_start_mV;Фаза 5: Начальное напряжение (мВ)
+56;0x0038;INT32;ph5_end_mV;Фаза 5: Конечное напряжение (мВ)
+58;0x003A;INT32;ph5_step_mV;Фаза 5: Шаг напряжения (мВ)
+60;0x003C;INT32;ph5_period_ms;Фаза 5: Период шага (мс)
+62;0x003E;INT32;ph5_settle_ms;Фаза 5: Время стабилизации (мс)
+64;0x0040;INT32;ph5_pause_ms;Фаза 5: Пауза после фазы (мс)
+66;0x0042;FLOAT;version_f;Версия (Float)
+68;0x0044;FLOAT;repeats_f;Повторы (Float)
+70;0x0046;FLOAT;num_phases_f;Кол-во фаз (Float)
+72;0x0048;FLOAT;ph1_start_mV_f;Фаза 1: Старт (мВ) (Float)
+74;0x004A;FLOAT;ph1_end_mV_f;Фаза 1: Стоп (мВ) (Float)
+76;0x004C;FLOAT;ph1_step_mV_f;Фаза 1: Шаг (мВ) (Float)
+78;0x004E;FLOAT;ph1_period_ms_f;Фаза 1: Период (мс) (Float)
+80;0x0050;FLOAT;ph1_settle_ms_f;Фаза 1: Уст. время (мс) (Float)
+82;0x0052;FLOAT;ph1_pause_ms_f;Фаза 1: Пауза (мс) (Float)
+84;0x0054;FLOAT;ph2_start_mV_f;Фаза 2: Старт (мВ) (Float)
+86;0x0056;FLOAT;ph2_end_mV_f;Фаза 2: Стоп (мВ) (Float)
+88;0x0058;FLOAT;ph2_step_mV_f;Фаза 2: Шаг (мВ) (Float)
+90;0x005A;FLOAT;ph2_period_ms_f;Фаза 2: Период (мс) (Float)
+92;0x005C;FLOAT;ph2_settle_ms_f;Фаза 2: Уст. время (мс) (Float)
+94;0x005E;FLOAT;ph2_pause_ms_f;Фаза 2: Пауза (мс) (Float)
+96;0x0060;FLOAT;ph3_start_mV_f;Фаза 3: Старт (мВ) (Float)
+98;0x0062;FLOAT;ph3_end_mV_f;Фаза 3: Стоп (мВ) (Float)
+100;0x0064;FLOAT;ph3_step_mV_f;Фаза 3: Шаг (мВ) (Float)
+102;0x0066;FLOAT;ph3_period_ms_f;Фаза 3: Период (мс) (Float)
+104;0x0068;FLOAT;ph3_settle_ms_f;Фаза 3: Уст. время (мс) (Float)
+106;0x006A;FLOAT;ph3_pause_ms_f;Фаза 3: Пауза (мс) (Float)
+108;0x006C;FLOAT;ph4_start_mV_f;Фаза 4: Старт (мВ) (Float)
+110;0x006E;FLOAT;ph4_end_mV_f;Фаза 4: Стоп (мВ) (Float)
+112;0x0070;FLOAT;ph4_step_mV_f;Фаза 4: Шаг (мВ) (Float)
+114;0x0072;FLOAT;ph4_period_ms_f;Фаза 4: Период (мс) (Float)
+116;0x0074;FLOAT;ph4_settle_ms_f;Фаза 4: Уст. время (мс) (Float)
+118;0x0076;FLOAT;ph4_pause_ms_f;Фаза 4: Пауза (мс) (Float)
+120;0x0078;FLOAT;ph5_start_mV_f;Фаза 5: Старт (мВ) (Float)
+122;0x007A;FLOAT;ph5_end_mV_f;Фаза 5: Стоп (мВ) (Float)
+124;0x007C;FLOAT;ph5_step_mV_f;Фаза 5: Шаг (мВ) (Float)
+126;0x007E;FLOAT;ph5_period_ms_f;Фаза 5: Период (мс) (Float)
+128;0x0080;FLOAT;ph5_settle_ms_f;Фаза 5: Уст. время (мс) (Float)
+130;0x0082;FLOAT;ph5_pause_ms_f;Фаза 5: Пауза (мс) (Float)
+132;0x0084;FLOAT;Command;Команда (1.0=Start, 2.0=Stop, 3.0=Restart)
+200;0x00C8;FLOAT;ch1_k;Канал 1: Коэффициент K
+202;0x00CA;FLOAT;ch2_k;Канал 2: Коэффициент K
+204;0x00CC;FLOAT;ch3_k;Канал 3: Коэффициент K
+206;0x00CE;FLOAT;ch4_k;Канал 4: Коэффициент K
+208;0x00D0;FLOAT;ch5_k;Канал 5: Коэффициент K
+210;0x00D2;FLOAT;ch6_k;Канал 6: Коэффициент K
+212;0x00D4;FLOAT;ch7_k;Канал 7: Коэффициент K
+214;0x00D6;FLOAT;ch8_k;Канал 8: Коэффициент K
+216;0x00D8;FLOAT;ch1_b;Канал 1: Смещение B
+218;0x00DA;FLOAT;ch2_b;Канал 2: Смещение B
+220;0x00DC;FLOAT;ch3_b;Канал 3: Смещение B
+222;0x00DE;FLOAT;ch4_b;Канал 4: Смещение B
+224;0x00E0;FLOAT;ch5_b;Канал 5: Смещение B
+226;0x00E2;FLOAT;ch6_b;Канал 6: Смещение B
+228;0x00E4;FLOAT;ch7_b;Канал 7: Смещение B
+230;0x00E6;FLOAT;ch8_b;Канал 8: Смещение B
+400;0x0190;FLOAT;calc_k_sum;pH: Коэффициент K для суммы
+402;0x0192;FLOAT;calc_b_sum;pH: Смещение B для суммы
+404;0x0194;FLOAT;calc_alpha_c;EMA Alpha для pH (0.0 - 1.0)
+406;0x0196;FLOAT;calc_deadband_acid;pH: Мертвая зона (Кислота)
+408;0x0198;FLOAT;calc_deadband_alkali;pH: Мертвая зона (Щелочь)
+410;0x019A;FLOAT;calc_ph_neutral;pH: Значение нейтрали
+412;0x019C;FLOAT;calc_k_acid;pH: K для Кислоты
+414;0x019E;FLOAT;calc_b_acid;pH: B для Кислоты
+416;0x01A0;FLOAT;calc_k_alkali;pH: K для Щелочи
+418;0x01A2;FLOAT;calc_b_alkali;pH: B для Щелочи
+420;0x01A4;FLOAT;calc_alpha_redox1;EMA Alpha для Redox 1 (0.0 - 1.0)
+422;0x01A6;FLOAT;calc_alpha_redox2;EMA Alpha для Redox 2 (0.0 - 1.0)
+424;0x01A8;FLOAT;tok1_k;Коэффициент тока фазы 1 (для pH)
+426;0x01AA;FLOAT;tok2_k;Коэффициент тока фазы 2 (для pH)
+430;0x01AE;FLOAT;ao1_source;Источник AO1 (0=OFF 1=pH 2=C 3=R1 4=R2)
+432;0x01B0;FLOAT;ao1_min;AO1 значение при 4 mA
+434;0x01B2;FLOAT;ao1_max;AO1 значение при 20 mA
+436;0x01B4;FLOAT;ao2_source;Источник AO2 (0=OFF 1=pH 2=C 3=R1 4=R2)
+438;0x01B6;FLOAT;ao2_min;AO2 значение при 4 mA
+440;0x01B8;FLOAT;ao2_max;AO2 значение при 20 mA
+442;0x01BA;FLOAT;ao3_source;Источник AO3 (0=OFF 1=pH 2=C 3=R1 4=R2)
+444;0x01BC;FLOAT;ao3_min;AO3 значение при 4 mA
+446;0x01BE;FLOAT;ao3_max;AO3 значение при 20 mA
+1000;0x03E8;FLOAT;Calc_Ch1;Текущее: Канал 1
+1002;0x03EA;FLOAT;Calc_Ch2;Текущее: Канал 2
+1004;0x03EC;FLOAT;Calc_Ch3;Текущее: Канал 3
+1006;0x03EE;FLOAT;Calc_Ch4;Текущее: Канал 4
+1008;0x03F0;FLOAT;Calc_Ch5;Текущее: Канал 5
+1010;0x03F2;FLOAT;Calc_Ch6;Текущее: Канал 6
+1012;0x03F4;FLOAT;Calc_Ch7;Текущее: Канал 7
+1014;0x03F6;FLOAT;Calc_Ch8;Текущее: Канал 8
+3000;0x0BB8;FLOAT;Ph1_Ch1;Снимок Фазы 1: Канал 1
+3002;0x0BBA;FLOAT;Ph1_Ch2;Снимок Фазы 1: Канал 2
+3004;0x0BBC;FLOAT;Ph1_Ch3;Снимок Фазы 1: Канал 3
+3006;0x0BBE;FLOAT;Ph1_Ch4;Снимок Фазы 1: Канал 4
+3008;0x0BC0;FLOAT;Ph1_Ch5;Снимок Фазы 1: Канал 5
+3010;0x0BC2;FLOAT;Ph1_Ch6;Снимок Фазы 1: Канал 6
+3012;0x0BC4;FLOAT;Ph1_Ch7;Снимок Фазы 1: Канал 7
+3014;0x0BC6;FLOAT;Ph1_Ch8;Снимок Фазы 1: Канал 8
+3016;0x0BC8;FLOAT;Ph2_Ch1;Снимок Фазы 2: Канал 1
+3018;0x0BCA;FLOAT;Ph2_Ch2;Снимок Фазы 2: Канал 2
+3020;0x0BCC;FLOAT;Ph2_Ch3;Снимок Фазы 2: Канал 3
+3022;0x0BCE;FLOAT;Ph2_Ch4;Снимок Фазы 2: Канал 4
+3024;0x0BD0;FLOAT;Ph2_Ch5;Снимок Фазы 2: Канал 5
+3026;0x0BD2;FLOAT;Ph2_Ch6;Снимок Фазы 2: Канал 6
+3028;0x0BD4;FLOAT;Ph2_Ch7;Снимок Фазы 2: Канал 7
+3030;0x0BD6;FLOAT;Ph2_Ch8;Снимок Фазы 2: Канал 8
+3032;0x0BD8;FLOAT;Ph3_Ch1;Снимок Фазы 3: Канал 1
+3034;0x0BDA;FLOAT;Ph3_Ch2;Снимок Фазы 3: Канал 2
+3036;0x0BDC;FLOAT;Ph3_Ch3;Снимок Фазы 3: Канал 3
+3038;0x0BDE;FLOAT;Ph3_Ch4;Снимок Фазы 3: Канал 4
+3040;0x0BE0;FLOAT;Ph3_Ch5;Снимок Фазы 3: Канал 5
+3042;0x0BE2;FLOAT;Ph3_Ch6;Снимок Фазы 3: Канал 6
+3044;0x0BE4;FLOAT;Ph3_Ch7;Снимок Фазы 3: Канал 7
+3046;0x0BE6;FLOAT;Ph3_Ch8;Снимок Фазы 3: Канал 8
+3048;0x0BE8;FLOAT;Ph4_Ch1;Снимок Фазы 4: Канал 1
+3050;0x0BEA;FLOAT;Ph4_Ch2;Снимок Фазы 4: Канал 2
+3052;0x0BEC;FLOAT;Ph4_Ch3;Снимок Фазы 4: Канал 3
+3054;0x0BEE;FLOAT;Ph4_Ch4;Снимок Фазы 4: Канал 4
+3056;0x0BF0;FLOAT;Ph4_Ch5;Снимок Фазы 4: Канал 5
+3058;0x0BF2;FLOAT;Ph4_Ch6;Снимок Фазы 4: Канал 6
+3060;0x0BF4;FLOAT;Ph4_Ch7;Снимок Фазы 4: Канал 7
+3062;0x0BF6;FLOAT;Ph4_Ch8;Снимок Фазы 4: Канал 8
+3064;0x0BF8;FLOAT;Ph5_Ch1;Снимок Фазы 5: Канал 1
+3066;0x0BFA;FLOAT;Ph5_Ch2;Снимок Фазы 5: Канал 2
+3068;0x0BFC;FLOAT;Ph5_Ch3;Снимок Фазы 5: Канал 3
+3070;0x0BFE;FLOAT;Ph5_Ch4;Снимок Фазы 5: Канал 4
+3072;0x0C00;FLOAT;Ph5_Ch5;Снимок Фазы 5: Канал 5
+3074;0x0C02;FLOAT;Ph5_Ch6;Снимок Фазы 5: Канал 6
+3076;0x0C04;FLOAT;Ph5_Ch7;Снимок Фазы 5: Канал 7
+3078;0x0C06;FLOAT;Ph5_Ch8;Снимок Фазы 5: Канал 8
+4000;0x0FA0;FLOAT;C_raw;Сырая сумма токов
+4002;0x0FA2;FLOAT;C_filt;Отфильтрованная сумма (EMA)
+4004;0x0FA4;FLOAT;C_acid;Концентрация кислоты
+4006;0x0FA6;FLOAT;C_alkali;Концентрация щелочи
+4008;0x0FA8;FLOAT;pH;Итоговый pH
+4010;0x0FAA;FLOAT;Redox1_raw;Redox 1 (сырой)
+4012;0x0FAC;FLOAT;Redox1_avg;Redox 1 (средний EMA)
+4014;0x0FAE;FLOAT;Redox2_raw;Redox 2 (сырой)
+4016;0x0FB0;FLOAT;Redox2_avg;Redox 2 (средний EMA)
+16453;0x4045;FLOAT;calc_b_sum (Legacy);Дубликат 402
+16457;0x4049;FLOAT;ch3_b (Legacy);Дубликат 220
+16463;0x404F;FLOAT;C_alkali (Legacy);Дубликат 4006
+16465;0x4051;FLOAT;C_acid (Legacy);Дубликат 4004
+16451;0x4043;FLOAT;calc_k_sum (Legacy);Дубликат 400
+16455;0x4047;FLOAT;ch3_k (Legacy);Дубликат 204
+16439;0x4037;FLOAT;calc_alpha_c (Legacy);Дубликат 404
+16441;0x4039;FLOAT;calc_alpha_redox1 (Legacy);Дубликат 420
+16433;0x4031;FLOAT;Redox1_avg (Legacy);Дубликат 4012
+16461;0x404D;FLOAT;pH (Legacy);Дубликат 4008
+16429;0x402D;FLOAT;calc_deadband_alkali (Legacy);Дубликат 408
+16421;0x4025;FLOAT;calc_deadband_acid (Legacy);Дубликат 406
+16437;0x4035;FLOAT;calc_b_alkali (Legacy);Дубликат 418
+16445;0x403D;FLOAT;calc_b_acid (Legacy);Дубликат 414
+16459;0x404B;FLOAT;calc_ph_neutral (Legacy);Дубликат 410
+16411;0x401B;FLOAT;Ph1_Ch3 (Legacy);Дубликат 3004
+16413;0x401D;FLOAT;Ph2_Ch3 (Legacy);Дубликат 3020
+16395;0x400B;FLOAT;RESERVED (Legacy);Резерв
+16403;0x4013;FLOAT;Calc_Ch1 (Legacy);Дубликат 1000
