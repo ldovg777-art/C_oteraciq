@@ -400,15 +400,21 @@ static void params_to_registers(const IterParams *p, uint16_t *regs, int reg_cou
     if (reg_count < TOTAL_REGS) return;
     
     /* Сохраняем значения runtime-регистров, чтобы не затереть нулями */
-    uint16_t ctrl_backup[CONTROL_REG_COUNT]; memcpy(ctrl_backup, &regs[CONTROL_REG_ADDR], sizeof(ctrl_backup));
-    uint16_t results_backup[RESULTS_COUNT]; memcpy(results_backup, &regs[RESULTS_START], sizeof(results_backup));
-    uint16_t phase_results_backup[PHASE_RESULTS_COUNT]; memcpy(phase_results_backup, &regs[PHASE_RESULTS_START], sizeof(phase_results_backup));
-    uint16_t chem_results_backup[CHEM_RESULTS_COUNT]; memcpy(chem_results_backup, &regs[CHEM_RESULTS_START], sizeof(chem_results_backup));
+    uint16_t ctrl_backup[CONTROL_REG_COUNT]; memcpy(ctrl_backup, &regs[CONTROL_REG_ADDR], CONTROL_REG_COUNT * sizeof(uint16_t));
+    uint16_t results_backup[RESULTS_COUNT]; memcpy(results_backup, &regs[RESULTS_START], RESULTS_COUNT * sizeof(uint16_t));
+    uint16_t phase_results_backup[PHASE_RESULTS_COUNT]; memcpy(phase_results_backup, &regs[PHASE_RESULTS_START], PHASE_RESULTS_COUNT * sizeof(uint16_t));
+    uint16_t chem_results_backup[CHEM_RESULTS_COUNT]; memcpy(chem_results_backup, &regs[CHEM_RESULTS_START], CHEM_RESULTS_COUNT * sizeof(uint16_t));
 
     /* ВАЖНО: memset может очистить "дырки" в памяти, которые не описаны в params. 
        Если в системе есть другие важные регистры, лучше обновлять точечно, а не делать memset.
        Пока оставляем как есть, так как структура памяти выглядит плотной для params. */
     memset(regs, 0, sizeof(uint16_t) * reg_count);
+
+    /* Восстанавливаем runtime-регистры сразу после очистки, чтобы их не обнулять */
+    memcpy(&regs[CONTROL_REG_ADDR], ctrl_backup, CONTROL_REG_COUNT * sizeof(uint16_t));
+    memcpy(&regs[RESULTS_START], results_backup, RESULTS_COUNT * sizeof(uint16_t));
+    memcpy(&regs[PHASE_RESULTS_START], phase_results_backup, PHASE_RESULTS_COUNT * sizeof(uint16_t));
+    memcpy(&regs[CHEM_RESULTS_START], chem_results_backup, CHEM_RESULTS_COUNT * sizeof(uint16_t));
 
     int32_to_regs(1, &regs[0]); int32_to_regs((int32_t)p->repeats, &regs[2]); int32_to_regs((int32_t)p->num_phases, &regs[4]);
     /* Phases INT */
@@ -461,11 +467,6 @@ static void params_to_registers(const IterParams *p, uint16_t *regs, int reg_cou
     float_to_regs(p->ao3_source, &regs[CHEM_SETTINGS_START + 42]); /* 442 */
     float_to_regs(p->ao3_min, &regs[CHEM_SETTINGS_START + 44]);    /* 444 */
     float_to_regs(p->ao3_max, &regs[CHEM_SETTINGS_START + 46]);    /* 446 */
-
-    memcpy(&regs[CONTROL_REG_ADDR], ctrl_backup, sizeof(ctrl_backup));
-    memcpy(&regs[RESULTS_START], results_backup, sizeof(results_backup));
-    memcpy(&regs[PHASE_RESULTS_START], phase_results_backup, sizeof(phase_results_backup));
-    memcpy(&regs[CHEM_RESULTS_START], chem_results_backup, sizeof(chem_results_backup));
 
     /* FIX v12: Legacy Mirroring (копируем новые значения в старые адреса для SCADA) */
     /* 402 -> 0x4045 (calc_b_sum) */
